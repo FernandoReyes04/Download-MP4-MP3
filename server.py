@@ -124,6 +124,63 @@ def startup_update():
     check_update()
     if UPDATE["state"] == "available" and read_settings().get("auto_update", True):
         apply_update()
+    check_app_update()
+    if APP["state"] == "available" and read_settings().get("auto_update", True):
+        apply_app_update()
+
+
+# ---------- Actualización del programa (GitHub Releases) ----------
+APP_VERSION = "1"   # debe coincidir con la etiqueta del release (v1, v2, ...)
+REPO = "FernandoReyes04/Download-MP4-MP3"
+APP = {"state": "idle", "current": APP_VERSION, "latest": "", "message": "", "url": ""}
+
+
+def _vtuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v)) or (0,)
+
+
+def check_app_update():
+    try:
+        rel = http_get(f"https://api.github.com/repos/{REPO}/releases/latest")
+        APP["latest"] = rel["tag_name"].lstrip("vV")
+        asset = next((a for a in rel.get("assets", []) if a["name"].lower().endswith(".exe")), None)
+        APP["url"] = asset["browser_download_url"] if asset else ""
+        newer = _vtuple(APP["latest"]) > _vtuple(APP_VERSION)
+        APP["state"] = "available" if newer and APP["url"] else "uptodate"
+    except Exception:
+        APP["state"] = "offline"
+    return APP
+
+
+def apply_app_update():
+    if not FROZEN:
+        APP["state"], APP["message"] = "error", "Solo disponible en el programa instalado (.exe)"
+        return APP
+    if any(j.get("status") == "running" for j in JOBS.values()):
+        APP["message"] = "Espera a que terminen las descargas en curso"
+        return APP
+    APP["state"] = "updating"
+    exe = Path(sys.executable)
+    new, old = exe.with_suffix(".new"), exe.with_suffix(".old")
+    try:
+        new.write_bytes(http_get(APP["url"], binary=True))
+        if new.stat().st_size < 5_000_000:
+            raise RuntimeError("Descarga inválida")
+        old.unlink(missing_ok=True)
+        os.replace(exe, old)      # Windows permite renombrar un .exe en ejecución
+        os.replace(new, exe)
+        subprocess.Popen([str(exe), "--restarted"], cwd=str(exe.parent))
+        os._exit(0)
+    except Exception as e:
+        if old.exists() and not exe.exists():
+            os.replace(old, exe)
+        APP["state"], APP["message"] = "error", f"Falló la actualización: {e}"
+    return APP
+
+
+def cleanup_old():
+    if FROZEN:
+        Path(sys.executable).with_suffix(".old").unlink(missing_ok=True)
 
 
 if "--ytdlp" not in sys.argv:  # evita recursión cuando el programa actúa como yt-dlp
@@ -203,6 +260,8 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             data = self.body()
+            if self.path == "/api/app/apply":
+                return self.send_json(apply_app_update())
             if self.path == "/api/update/apply":
                 return self.send_json(apply_update())
             if self.path == "/api/update/auto":
@@ -232,6 +291,8 @@ class H(BaseHTTPRequestHandler):
             self.send_json({"error": str(e)}, 500)
 
     def do_GET(self):
+        if self.path == "/api/app/status":
+            return self.send_json(APP)
         if self.path == "/api/update/status":
             return self.send_json({**UPDATE, "auto": read_settings().get("auto_update", True)})
         if self.path == "/api/settings":
@@ -377,7 +438,9 @@ def _main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
     threading.Thread(target=watchdog, daemon=True).start()
     threading.Thread(target=startup_update, daemon=True).start()
-    threading.Timer(0.5, open_window).start()
+    cleanup_old()
+    if "--restarted" not in sys.argv:
+        threading.Timer(0.5, open_window).start()
     LAST_PING[0] = time.time()
     srv.serve_forever()
 

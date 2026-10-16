@@ -108,3 +108,20 @@ $("updbtn").onclick = async () => {
 };
 $("auto").onchange = () => post("/api/update/auto", { on: $("auto").checked });
 refreshUpd(); setInterval(refreshUpd, 4000);
+
+// ---- Actualizacion del programa (GitHub Releases) ----
+async function refreshApp() {
+  const a = await (await fetch("/api/app/status")).json();
+  const box = $("appupd");
+  const show = (t, b) => { box.classList.remove("hide"); $("appupdtxt").textContent = t; $("appupdbtn").classList.toggle("hide", !b); };
+  if (a.state === "available") show(`\u{1F680} Nueva versi\u00f3n del programa: v${a.latest} (tienes v${a.current})`, true);
+  else if (a.state === "updating") show("\u23F3 Descargando nueva versi\u00f3n; la app se reiniciar\u00e1\u2026", false);
+  else if (a.state === "error") show("\u26A0\uFE0F " + a.message, true);
+  else box.classList.add("hide");
+}
+$("appupdbtn").onclick = async () => {
+  $("appupdbtn").disabled = true; $("appupdtxt").textContent = "\u23F3 Descargando nueva versi\u00f3n\u2026";
+  try { await post("/api/app/apply", {}); } catch (e) {}
+  $("appupdbtn").disabled = false; refreshApp();
+};
+refreshApp(); setInterval(refreshApp, 6000);

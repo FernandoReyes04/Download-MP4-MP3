@@ -40,10 +40,10 @@ button.ghost{background:rgba(255,255,255,.08)}
 .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#06b6d4);transition:width .3s}
 .err{color:#fca5a5}
 small{opacity:.7}
-#upd{display:flex;align-items:center;gap:12px;justify-content:space-between;background:rgba(103,232,249,.12);border-color:rgba(103,232,249,.4)}
+#upd,#appupd{display:flex;align-items:center;gap:12px;justify-content:space-between;background:rgba(103,232,249,.12);border-color:rgba(103,232,249,.4)}
 footer{text-align:center;opacity:.7;font-size:.85rem;margin-top:8px}
 footer label{cursor:pointer;margin-left:10px}
-.hide,#upd.hide{display:none}
+.hide,#upd.hide,#appupd.hide{display:none}
 </style>
 </head>
 <body>
@@ -52,6 +52,7 @@ footer label{cursor:pointer;margin-left:10px}
 <p class="sub">YouTube · Instagram · y más — local, privado, máxima calidad</p>
 
 <section id="upd" class="card hide"><span id="updtxt"></span><button id="updbtn" class="hide">Actualizar ahora</button></section>
+<section id="appupd" class="card hide"><span id="appupdtxt"></span><button id="appupdbtn" class="hide">Actualizar programa</button></section>
 
 <section class="card">
   <div class="row">

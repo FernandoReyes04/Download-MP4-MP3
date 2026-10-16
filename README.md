@@ -15,7 +15,7 @@ Funciona con [yt-dlp](https://github.com/yt-dlp/yt-dlp) y [FFmpeg](https://ffmpe
 
 ## 🚀 Uso rápido (ejecutable)
 
-1. Compila el programa (ver abajo) o descarga el `.exe` si está publicado en *Releases*.
+1. Descarga `VideoAudioDownloader.exe` desde [Releases](https://github.com/FernandoReyes04/Download-MP4-MP3/releases) (o compílalo, ver abajo).
 2. Ejecuta `VideoAudioDownloader.exe`. La primera vez se instala y abre una ventana de aplicación.
 3. Pega el enlace, pulsa **Analizar**, elige formato y **Descargar**.
 
@@ -48,3 +48,13 @@ COMPILAR.bat
 ## ⚠️ Aviso legal
 
 Usa esta herramienta solo para contenido propio, de dominio público o que tengas permiso de descargar. Respeta los términos de servicio de cada plataforma y los derechos de autor.
+
+## 🔄 Actualizaciones
+
+- **Motor de descargas (yt-dlp):** se revisa y actualiza solo desde GitHub al abrir la app.
+- **El programa:** al abrir, consulta el último [Release](https://github.com/FernandoReyes04/Download-MP4-MP3/releases). Si hay una versión más nueva con un `.exe` adjunto, avisa (o se actualiza solo si la casilla "Actualizar automáticamente" está activa) y se reinicia.
+
+### Publicar una nueva versión
+1. Sube el número en `APP_VERSION` de `server.py` (por ejemplo `"2"`).
+2. Ejecuta `COMPILAR.bat`.
+3. Crea un Release con la etiqueta `v2` y adjunta `dist\VideoAudioDownloader.exe`.
