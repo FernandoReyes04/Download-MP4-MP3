@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let kind = "mp4", height = null, jobId = null, info = null;
+let kind = "mp4", height = null, jobId = null, info = null, toastTimer = null;
 
 const post = async (path, body) => {
   const r = await fetch(path, {
@@ -24,6 +24,38 @@ const fmt = s => {
   const sec = String(Math.floor(s % 60)).padStart(2, "0");
   return `${m}:${sec}`;
 };
+
+// Sonido cristalino suave al terminar descarga (Web Audio API sin archivos externos)
+function playSuccessChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [587.33, 880].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.001, ctx.currentTime + i * 0.11);
+      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + i * 0.11 + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.11 + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.11);
+      osc.stop(ctx.currentTime + i * 0.11 + 0.46);
+    });
+  } catch (e) {}
+}
+
+function showCompletionToast(filename) {
+  const t = $("toast");
+  $("toastTitle").textContent = "✓ ¡Descarga completada!";
+  $("toastSub").textContent = filename
+    ? `${filename} · Mostrando en tu carpeta`
+    : "Abriendo carpeta con tu archivo seleccionado…";
+  t.classList.remove("hide");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add("hide"), 6500);
+  playSuccessChime();
+}
 
 // ---- Control Segmentado (MP4 / MP3) con Slider ----
 function setKind(k) {
@@ -74,7 +106,7 @@ $("pasteBtn").onclick = async () => {
   }
 };
 
-// ---- Analizar Enlace ----
+// ---- Analizar Enlace (con Esqueleto de Carga y compactación adaptativa) ----
 $("go").onclick = async () => {
   err("");
   const url = $("url").value.trim();
@@ -83,8 +115,11 @@ $("go").onclick = async () => {
     return;
   }
   $("panel").classList.add("hide");
+  $("skeleton").classList.remove("hide");
+  document.body.classList.add("has-content");
+
   $("go").disabled = true;
-  $("go").textContent = "Analizando…";
+  $("go").innerHTML = '<span class="btn-spinner"></span> Analizando…';
 
   try {
     info = await post("/api/info", { url });
@@ -96,10 +131,14 @@ $("go").onclick = async () => {
 
     $("prog").classList.add("hide");
     $("done").classList.add("hide");
+    $("fill").classList.remove("done-fill");
     setKind("mp4");
+
+    $("skeleton").classList.add("hide");
     $("panel").classList.remove("hide");
-    $("panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (e) {
+    $("skeleton").classList.add("hide");
+    document.body.classList.remove("has-content");
     err(e.message);
   } finally {
     $("go").disabled = false;
@@ -117,6 +156,7 @@ $("dl").onclick = async () => {
   $("dl").disabled = true;
   $("prog").classList.remove("hide");
   $("done").classList.add("hide");
+  $("fill").classList.remove("done-fill");
   $("fill").style.width = "0%";
   $("ptxt").textContent = "Iniciando descarga…";
   $("peta").textContent = "";
@@ -134,20 +174,22 @@ $("dl").onclick = async () => {
         }
         $("fill").style.width = j.percent + "%";
         $("ptxt").textContent = j.status === "done"
-          ? "✓ Descarga completada"
+          ? "✓ Descarga finalizada · Carpeta abierta con el archivo seleccionado"
           : `${j.stage || "Descargando"} · ${j.speed || ""}`;
-        $("peta").textContent = j.status === "done" ? "" : (j.eta ? `ETA ${j.eta}` : `${j.percent.toFixed(0)}%`);
+        $("peta").textContent = j.status === "done" ? "100%" : (j.eta ? `ETA ${j.eta}` : `${j.percent.toFixed(0)}%`);
 
         if (j.status === "done") {
           clearInterval(timer);
+          $("fill").classList.add("done-fill");
           $("done").classList.remove("hide");
           $("dl").disabled = false;
+          showCompletionToast(j.filename);
         }
       } catch (ex) {
         clearInterval(timer);
         $("dl").disabled = false;
       }
-    }, 600);
+    }, 550);
   } catch (e) {
     err(e.message);
     $("dl").disabled = false;
@@ -155,8 +197,8 @@ $("dl").onclick = async () => {
 };
 
 $("save").onclick = () => location.href = "/api/file/" + jobId;
-$("folder").onclick = () => post("/api/open");
-$("openFolderBtn").onclick = () => post("/api/open");
+$("folder").onclick = () => post("/api/open", { jobId });
+$("openFolderBtn").onclick = () => post("/api/open", { jobId });
 
 // ---- Carpeta de destino ----
 const setDestDir = d => {

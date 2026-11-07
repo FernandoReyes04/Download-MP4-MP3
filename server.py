@@ -103,6 +103,20 @@ def open_folder(p):
         subprocess.Popen(["xdg-open", str(p)])
 
 
+def reveal_file(filepath):
+    """Abre el Explorador (Windows) o Finder (macOS) con el archivo descargado seleccionado."""
+    f = Path(filepath).expanduser().resolve()
+    if not f.exists():
+        open_folder(f.parent)
+        return
+    if IS_WIN:
+        subprocess.Popen(["explorer.exe", f"/select,{f}"])
+    elif IS_MAC:
+        subprocess.Popen(["open", "-R", str(f)])
+    else:
+        open_folder(f.parent)
+
+
 OUT = load_out()
 PORT = 8765
 JOBS = {}
@@ -295,8 +309,14 @@ def run_job(job_id, url, kind, height):
         proc.wait()
         if proc.returncode != 0:
             raise RuntimeError(last or "Falló la descarga")
-        job["file"] = pathfile.read_text(encoding="utf-8").strip().splitlines()[-1]
+        f_str = pathfile.read_text(encoding="utf-8").strip().splitlines()[-1]
+        job["file"] = f_str
+        job["filename"] = Path(f_str).name
         job["status"], job["percent"] = "done", 100
+        try:
+            reveal_file(f_str)
+        except Exception:
+            pass
     except Exception as e:
         job["status"], job["error"] = "error", str(e)
     finally:
@@ -343,7 +363,12 @@ class H(BaseHTTPRequestHandler):
                 set_out(data.get("dir", ""))
                 return self.send_json({"dir": str(OUT)})
             if self.path == "/api/open":
-                open_folder(OUT)
+                jid = data.get("jobId")
+                f = JOBS.get(jid, {}).get("file") if jid else None
+                if f and Path(f).exists():
+                    reveal_file(f)
+                else:
+                    open_folder(OUT)
                 return self.send_json({"ok": True})
             url = (data.get("url") or "").strip()
             if not re.match(r"^https?://", url):
@@ -539,9 +564,9 @@ def launch_desktop_window():
         webview.create_window(
             APP_NAME,
             f"http://127.0.0.1:{PORT}",
-            width=760,
-            height=890,
-            min_size=(620, 720),
+            width=740,
+            height=720,
+            min_size=(580, 560),
             background_color='#eef1f6',
             text_select=True
         )
