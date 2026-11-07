@@ -573,6 +573,36 @@ button:disabled {
   color: #ffffff;
   border-color: #12141a;
 }
+.studio-toolbar {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 7px;
+  margin-top: 9px;
+}
+.studio-tool-btn {
+  padding: 7px 11px;
+  font-size: 0.78rem;
+  font-weight: 630;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-main);
+  border: 1px solid #ffffff;
+  box-shadow: 0 3px 9px rgba(15, 23, 42, 0.06), inset 0 1px 0 #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.studio-tool-btn:hover {
+  background: #ffffff;
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.1);
+}
+.studio-tool-btn.active {
+  background: #12141a;
+  color: #ffffff;
+  border-color: #12141a;
+}
 .thumb-cover-btn {
   position: absolute;
   bottom: 5px;
@@ -1065,10 +1095,15 @@ footer span.link:hover { color: var(--text-main); }
           <span class="badge badge-clean hide" id="noWmBadge">✨ Sin marca de agua</span>
           <span class="badge" id="uploaderBadge">Canal</span>
           <span class="badge" id="durationBadge">0:00</span>
-          <button type="button" class="badge badge-action" id="openStudioBtn">🎛️ Estudio</button>
-          <button type="button" class="badge badge-action" id="openSubsBtn">💬 Subtítulos / Texto</button>
         </div>
       </div>
+    </div>
+
+    <!-- Barra Universal de Estudio (para YouTube, Instagram, TikTok, X y más) -->
+    <div class="studio-toolbar">
+      <button type="button" class="studio-tool-btn" id="openStudioBtn">✂️🎛️ Recortar y Estudio</button>
+      <button type="button" class="studio-tool-btn" id="openSubsBtn">💬 Subtítulos y Transcripción</button>
+      <button type="button" class="studio-tool-btn" id="coverToolbarBtn" title="Guardar portada en máxima calidad">🖼️ Portada</button>
     </div>
 
     <div class="segmented-control" id="segmented" data-mode="mp4">
@@ -1233,17 +1268,21 @@ footer span.link:hover { color: var(--text-main); }
       </div>
     </div>
 
-    <!-- Sección 3: Perfiles de Exportación de Video / GIF HD -->
+    <!-- Sección 3: Perfiles de Exportación de Video / GIF HD y Subtítulos -->
     <div class="studio-section">
       <div class="studio-section-title">
-        <span>🎬 Perfil de Exportación de Video / GIF</span>
+        <span>🎬 Perfil de Exportación de Video / GIF &amp; Subtítulos</span>
       </div>
-      <div class="options-chips" id="vprofChips" style="margin-bottom: 0;">
+      <div class="options-chips" id="vprofChips" style="margin-bottom: 8px;">
         <span class="chip on" data-vprof="original">⭐ Original (Máxima calidad)</span>
         <span class="chip" data-vprof="edit">🎞️ Modo Edición (Premiere / DaVinci H.264)</span>
         <span class="chip" data-vprof="social">💬 Modo Ligero (WhatsApp / Discord)</span>
         <span class="chip" data-vprof="gif">✨ Convertir recorte a GIF HD</span>
       </div>
+      <label class="custom-checkbox" style="margin-bottom: 0; padding: 7px 11px;">
+        <input type="checkbox" id="embedSubsCheck">
+        <span><strong>💬 Agregar / Incrustar subtítulos al video MP4</strong> (usa los subtítulos del video o los que edites)</span>
+      </label>
     </div>
 
     <!-- Sección 4: Metadatos Limpios y Portada 1:1 -->
@@ -1319,7 +1358,12 @@ footer span.link:hover { color: var(--text-main); }
       <div id="srtList" class="srt-list"></div>
     </div>
 
-    <div class="modal-nav" style="margin-top: 12px;">
+    <label class="custom-checkbox" style="margin-top: 10px; margin-bottom: 0; padding: 7px 11px;">
+      <input type="checkbox" id="embedSubsFromModalCheck">
+      <span><strong>🎬 Agregar / Incrustar estos subtítulos editados al descargar el video MP4</strong></span>
+    </label>
+
+    <div class="modal-nav" style="margin-top: 10px;">
       <button type="button" id="copyTranscriptBtn" class="ghost">📋 Copiar texto</button>
       <button type="button" id="saveTxtBtn" class="ghost">💾 Guardar .TXT</button>
       <button type="button" id="saveSrtBtn" class="primary">🎬 Guardar .SRT Editable</button>

@@ -85,7 +85,8 @@ function isStudioActive() {
     $("normVolCheck").checked ||
     dspEffect !== "none" ||
     videoProfile !== "original" ||
-    $("squareCoverCheck").checked
+    $("squareCoverCheck").checked ||
+    $("embedSubsCheck").checked
   );
 }
 
@@ -93,7 +94,7 @@ function updateStudioBadge() {
   const active = isStudioActive();
   const btn = $("openStudioBtn");
   btn.classList.toggle("active", active);
-  btn.textContent = active ? "🎛️ Estudio ●" : "🎛️ Estudio";
+  btn.textContent = active ? "✂️🎛️ Estudio ●" : "✂️🎛️ Recortar y Estudio";
   updateDlBtnLabel();
 }
 
@@ -267,6 +268,9 @@ $("dl").onclick = async () => {
       metaTitle: $("metaTitle").value.trim(),
       metaArtist: $("metaArtist").value.trim(),
       squareCover: $("squareCoverCheck").checked,
+      embedSubs: $("embedSubsCheck").checked,
+      customSrt: $("embedSubsCheck").checked ? buildSrtString() : "",
+      subLang: $("subLangSelect").value || "es",
       thumbnail: (info && info.thumbnail) || ""
     };
     jobId = (await post("/api/download", { url: $("url").value.trim(), kind, height, opts })).id;
@@ -498,7 +502,17 @@ async function handleCoverDownload(square = false) {
 }
 
 $("coverBtn").onclick = () => handleCoverDownload(false);
+$("coverToolbarBtn").onclick = () => handleCoverDownload(false);
 $("saveSquareCoverBtn").onclick = () => handleCoverDownload(true);
+
+$("embedSubsCheck").onchange = () => {
+  $("embedSubsFromModalCheck").checked = $("embedSubsCheck").checked;
+  updateStudioBadge();
+};
+$("embedSubsFromModalCheck").onchange = () => {
+  $("embedSubsCheck").checked = $("embedSubsFromModalCheck").checked;
+  updateStudioBadge();
+};
 
 // ---- Modal: Estudio de Edición (Video & Audio) ----
 const studioModal = $("studioModal");
@@ -546,6 +560,8 @@ $("resetStudioBtn").onclick = () => {
   $("chapterSelect").value = "";
   $("normVolCheck").checked = false;
   $("squareCoverCheck").checked = false;
+  $("embedSubsCheck").checked = false;
+  $("embedSubsFromModalCheck").checked = false;
   dspEffect = "none";
   videoProfile = "original";
   document.querySelectorAll("#dspChips .chip").forEach((x, i) => x.classList.toggle("on", i === 0));

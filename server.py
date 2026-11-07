@@ -5,6 +5,9 @@ import json, os, re, shutil, subprocess, sys, threading, time, uuid
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
+os.environ["PYTHONUTF8"] = "1"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
 # Habilitar Per-Monitor V2 High-DPI en Windows (elimina 100% de la borrosidad en pantallas escaladas)
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -183,6 +186,21 @@ if not FFDIR and IS_MAC:
         if (_d / "ffmpeg").exists():
             FFDIR = _d
             break
+
+# Asegurar que FFmpeg, Deno y Node estén en PATH incluso al abrir desde acceso directo
+_extra_paths = []
+if FFDIR:
+    _extra_paths.append(str(FFDIR))
+if IS_WIN:
+    _extra_paths += [
+        str(Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Links"),
+        r"C:\Program Files\nodejs",
+        str(Path.home() / ".deno" / "bin"),
+    ]
+elif IS_MAC:
+    _extra_paths += ["/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".deno" / "bin")]
+os.environ["PATH"] = os.pathsep.join([p for p in _extra_paths if p and os.path.exists(p)] + [os.environ.get("PATH", "")])
+
 LAST_PING = [0.0]
 
 # Motor de descargas
@@ -190,17 +208,48 @@ _eng_name = "yt-dlp.exe" if IS_WIN else ("yt-dlp_macos" if IS_MAC else "yt-dlp")
 ENGINE = APPDATA / _eng_name
 ENGINE_URL = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{_eng_name}"
 YTDLP = []
+COOKIE_ARGS = []
 UPDATE = {"state": "idle", "current": "", "latest": "", "message": ""}
 
 
+def get_installed_browsers():
+    """Detecta navegadores compatibles con extracción directa de cookies (evitando bloqueo DPAPI de Chrome/Edge en Win11)."""
+    browsers = []
+    if IS_WIN:
+        appdata = Path(os.environ.get("APPDATA", ""))
+        if (appdata / "Mozilla" / "Firefox" / "Profiles").exists():
+            browsers.append("firefox")
+    elif IS_MAC:
+        home = Path.home()
+        if (home / "Library" / "Application Support" / "Firefox" / "Profiles").exists():
+            browsers.append("firefox")
+        browsers.append("safari")
+        if (home / "Library" / "Application Support" / "BraveSoftware" / "Brave-Browser").exists():
+            browsers.append("brave")
+        if (home / "Library" / "Application Support" / "Google" / "Chrome").exists():
+            browsers.append("chrome")
+    return browsers
+
+
 def refresh_engine():
-    base = [str(ENGINE)] if (ENGINE.exists() and (not IS_WIN or FROZEN)) else (
+    if IS_WIN and ENGINE.exists():
+        try:
+            ENGINE.unlink(missing_ok=True)
+        except Exception:
+            pass
+    base = [str(ENGINE)] if (ENGINE.exists() and not IS_WIN) else (
         [sys.executable, "--ytdlp"] if FROZEN else [sys.executable, "-m", "yt_dlp"])
+    base += ["--encoding", "utf-8", "--remote-components", "ejs:github", "--js-runtimes", "node"]
     if FFDIR:
         base += ["--ffmpeg-location", str(FFDIR)]
     YTDLP[:] = base
-    r = subprocess.run(base + ["--version"], capture_output=True, text=True, creationflags=NOWIN)
-    UPDATE["current"] = r.stdout.strip()
+    if not COOKIE_ARGS:
+        b_list = get_installed_browsers()
+        if b_list:
+            COOKIE_ARGS[:] = ["--cookies-from-browser", b_list[0]]
+    r = subprocess.run(base + ["--version"], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", creationflags=NOWIN)
+    UPDATE["current"] = (r.stdout or "").strip()
 
 
 def http_get(url, binary=False):
@@ -225,15 +274,15 @@ def apply_update():
         return UPDATE
     UPDATE["state"] = "updating"
     try:
-        if not FROZEN and IS_WIN:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp"],
-                           check=True, creationflags=NOWIN)
+        if IS_WIN:
+            if not FROZEN:
+                subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp", "yt-dlp-ejs", "curl_cffi"],
+                               check=True, creationflags=NOWIN)
         else:
             ENGINE.parent.mkdir(parents=True, exist_ok=True)
             tmp = ENGINE.with_suffix(".new")
             tmp.write_bytes(http_get(ENGINE_URL, binary=True))
-            if not IS_WIN:
-                tmp.chmod(0o755)
+            tmp.chmod(0o755)
             ok = subprocess.run([str(tmp), "--version"], capture_output=True, text=True, creationflags=NOWIN)
             if ok.returncode != 0:
                 raise RuntimeError("Descarga inválida")
@@ -443,32 +492,193 @@ def _fmt_srt_time(sec):
     return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
 
 
+def is_instagram_url(url):
+    return bool(re.search(r"(^https?://)?([\w.-]*\.)?instagram\.com/(?:[\w.-]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)", url or "", re.I))
+
+
+def instagram_embed_fetch(url):
+    """Respaldo directo para Instagram Reels/Posts vía página Embed cuando la API anónima limita el acceso."""
+    import urllib.request
+    m = re.search(r"instagram\.com/(?:[\w.-]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)", url or "", re.I)
+    if not m:
+        raise RuntimeError("No se pudo identificar el código del Reel/Post de Instagram")
+    shortcode = m.group(1)
+    embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+    req = urllib.request.Request(embed_url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+    })
+    with urllib.request.urlopen(req, timeout=20) as r:
+        html = r.read().decode("utf-8", errors="replace")
+
+    video_url = None
+    thumb_url = None
+    title = f"Instagram Reel ({shortcode})"
+    uploader = "Instagram"
+    duration = None
+
+    ctx_m = re.search(r'"contextJSON"\s*:\s*"((?:\\.|[^"\\])*)"', html)
+    if ctx_m:
+        try:
+            ctx = json.loads(json.loads(f'"{ctx_m.group(1)}"'))
+            media = (ctx.get("gql_data") or {}).get("shortcode_media") or (ctx.get("gql_data") or {}).get("xdt_shortcode_media") or {}
+            video_url = media.get("video_url")
+            thumb_url = media.get("display_url") or media.get("thumbnail_src")
+            owner = media.get("owner") or {}
+            uploader = owner.get("username") or owner.get("full_name") or "Instagram"
+            duration = media.get("video_duration")
+            edges = ((media.get("edge_media_to_caption") or {}).get("edges") or [])
+            if edges and isinstance(edges[0], dict):
+                cap = ((edges[0].get("node") or {}).get("text") or "").strip()
+                if cap:
+                    title = cap.splitlines()[0][:120]
+        except Exception:
+            pass
+
+    if not video_url:
+        vm = re.search(r'"video_url"\s*:\s*"([^"]+)"', html)
+        if vm:
+            video_url = vm.group(1).encode("utf-8").decode("unicode_escape").replace(r"\/", "/")
+    if not thumb_url:
+        tm = re.search(r'class="EmbeddedMediaImage"[^>]+src="([^"]+)"', html) or re.search(r'"display_url"\s*:\s*"([^"]+)"', html)
+        if tm:
+            thumb_url = tm.group(1).replace("&amp;", "&").replace(r"\/", "/")
+
+    if not video_url:
+        raise RuntimeError("Instagram requiere iniciar sesión para ver este video (inicia sesión en Firefox o verifica el enlace)")
+    return {
+        "id": shortcode,
+        "title": title,
+        "uploader": uploader,
+        "thumbnail": thumb_url,
+        "duration": duration,
+        "video_url": video_url,
+    }
+
+
+def instagram_embed_download(job, url, kind, height, out):
+    """Descarga un Reel/Post de Instagram usando el flujo del respaldo Embed."""
+    import urllib.request
+    job["stage"] = "Obteniendo stream de Instagram…"
+    d = instagram_embed_fetch(url)
+    raw_title = (d.get("title") or "Instagram Video").strip()
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw_title).strip(" .")[:140] or "Instagram_Video"
+    vid_id = str(d.get("id") or uuid.uuid4().hex[:8])
+    media_url = d["video_url"]
+    final_path = out / f"{safe_title} [{vid_id}].{'mp3' if kind == 'mp3' else 'mp4'}"
+    tmp_path = out / f".{vid_id}.part"
+    req = urllib.request.Request(media_url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.instagram.com/"})
+    t0 = time.time()
+    downloaded = 0
+    with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_path, "wb") as fh:
+        total = int(resp.headers.get("Content-Length") or 0)
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            fh.write(chunk)
+            downloaded += len(chunk)
+            elapsed = max(time.time() - t0, 0.001)
+            spd = downloaded / elapsed
+            job["speed"] = f"{spd / (1024 * 1024):.2f}MiB/s" if spd >= 1048576 else f"{spd / 1024:.0f}KiB/s"
+            if total > 0:
+                job["percent"] = round(min(99.0, (downloaded * 100.0) / total), 1)
+    if kind == "mp3" and FFDIR:
+        job["stage"] = "Procesando Audio con FFmpeg…"
+        ff_exe = str(FFDIR / _ffname)
+        conv = subprocess.run([ff_exe, "-y", "-i", str(tmp_path), "-vn", "-acodec", "libmp3lame", "-q:a", "0", str(final_path)],
+                              capture_output=True, creationflags=NOWIN)
+        tmp_path.unlink(missing_ok=True)
+        if conv.returncode != 0:
+            raise RuntimeError("Falló la conversión de audio")
+    else:
+        os.replace(tmp_path, final_path)
+    return str(final_path)
+
+
+def run_ytdlp_json(url):
+    """Ejecuta yt-dlp -J con codificación UTF-8 segura y reintento automático con cookies del navegador."""
+    attempts = [list(COOKIE_ARGS)]
+    for b in get_installed_browsers():
+        cand = ["--cookies-from-browser", b]
+        if cand not in attempts:
+            attempts.append(cand)
+    if [] not in attempts:
+        attempts.append([])
+
+    last_err = "No se pudo leer el enlace"
+    for c_args in attempts:
+        p = subprocess.run(YTDLP + c_args + ["-J", "--no-playlist", "--no-warnings", url],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NOWIN)
+        out_txt = (p.stdout or "").strip()
+        if p.returncode == 0 and out_txt and out_txt != "null":
+            try:
+                d = json.loads(out_txt)
+                if d:
+                    if c_args != COOKIE_ARGS:
+                        COOKIE_ARGS[:] = c_args
+                    return d
+            except Exception:
+                pass
+        err_lines = [
+            ln.strip() for ln in (p.stderr or "").splitlines()
+            if ln.strip()
+            and not ln.strip().startswith("WARNING:")
+            and "Failed to decrypt with DPAPI" not in ln
+            and "Could not copy Chrome cookie database" not in ln
+        ]
+        if err_lines:
+            last_err = err_lines[-1]
+    raise RuntimeError(last_err)
+
+
 def get_info(url):
     is_tt = is_tiktok_url(url)
-    p = subprocess.run(YTDLP + ["-J", "--no-playlist", "--no-warnings", url],
-                       capture_output=True, text=True, encoding="utf-8", creationflags=NOWIN)
-    if p.returncode != 0:
+    is_ig = is_instagram_url(url)
+    try:
+        d = run_ytdlp_json(url)
+    except Exception as e:
         if is_tt:
-            d = tikwm_fetch(url)
-            author = d.get("author") or {}
-            raw_t = d.get("title") or "TikTok Video"
+            d_tt = tikwm_fetch(url)
+            author = d_tt.get("author") or {}
+            raw_t = d_tt.get("title") or "TikTok Video"
             raw_u = author.get("nickname") or author.get("unique_id") or "TikTok"
             ct, ca = _clean_metadata(raw_t, raw_u)
             return {
                 "title": raw_t,
                 "clean_title": ct,
                 "clean_artist": ca,
-                "thumbnail": d.get("origin_cover") or d.get("cover"),
-                "duration": d.get("duration"),
+                "thumbnail": d_tt.get("origin_cover") or d_tt.get("cover"),
+                "duration": d_tt.get("duration"),
                 "uploader": raw_u,
                 "site": "TikTok",
                 "heights": [1080, 720, 540],
                 "chapters": [],
-                "sub_langs": [],
+                "sub_langs": ["es", "en"],
                 "no_watermark": True
             }
-        raise RuntimeError((p.stderr.strip().splitlines() or ["No se pudo leer el enlace"])[-1])
-    d = json.loads(p.stdout)
+        if is_ig:
+            try:
+                d_ig = instagram_embed_fetch(url)
+                raw_t = d_ig.get("title") or "Instagram Reel"
+                raw_u = d_ig.get("uploader") or "Instagram"
+                ct, ca = _clean_metadata(raw_t, raw_u)
+                return {
+                    "title": raw_t,
+                    "clean_title": ct,
+                    "clean_artist": ca,
+                    "thumbnail": d_ig.get("thumbnail"),
+                    "duration": d_ig.get("duration"),
+                    "uploader": raw_u,
+                    "site": "Instagram",
+                    "heights": [1080, 720],
+                    "chapters": [],
+                    "sub_langs": ["es", "en"],
+                    "no_watermark": False
+                }
+            except Exception:
+                pass
+        raise RuntimeError(str(e))
     INFO_CACHE[url] = d
     fmts = d.get("formats", [])
     clean_fmts = [f for f in fmts if f.get("vcodec") not in (None, "none")
@@ -476,8 +686,8 @@ def get_info(url):
                   and "watermark" not in (f.get("format_note") or "").lower()]
     use_fmts = clean_fmts or [f for f in fmts if f.get("vcodec") not in (None, "none")]
     heights = sorted({_format_res(f) for f in use_fmts if _format_res(f) > 0}, reverse=True)
-    if is_tt and not heights:
-        heights = [1080, 720, 540]
+    if not heights:
+        heights = [1080, 720, 480]
     raw_t = d.get("title") or "Video"
     raw_u = d.get("uploader") or d.get("channel") or ""
     ct, ca = _clean_metadata(raw_t, raw_u)
@@ -491,6 +701,8 @@ def get_info(url):
     subs = set((d.get("subtitles") or {}).keys()) | set((d.get("automatic_captions") or {}).keys())
     pref_order = ["es", "es-419", "es-MX", "es-ES", "en", "en-US", "pt", "fr", "de", "it", "ja", "ko"]
     sub_langs = [l for l in pref_order if l in subs] + sorted([l for l in subs if l not in pref_order and "live_chat" not in l])[:15]
+    if not sub_langs:
+        sub_langs = ["es", "en", "pt", "fr"]
     return {
         "title": raw_t,
         "clean_title": ct,
@@ -498,7 +710,7 @@ def get_info(url):
         "thumbnail": d.get("thumbnail"),
         "duration": d.get("duration"),
         "uploader": raw_u,
-        "site": d.get("extractor_key"),
+        "site": d.get("extractor_key") or "Video",
         "heights": heights,
         "chapters": chapters,
         "sub_langs": sub_langs,
@@ -600,26 +812,118 @@ def _parse_vtt_or_srt(raw_text):
     return segments
 
 
+def transcribe_audio_with_sr(url, lang="es"):
+    """Transcribe directamente el audio del video por fragmentos cuando la plataforma no tiene subtítulos (ej. Instagram, Shorts, TikTok)."""
+    if not FFDIR:
+        return []
+    try:
+        import speech_recognition as sr
+        from concurrent.futures import ThreadPoolExecutor
+    except ImportError:
+        return []
+
+    tmp_dir = APPDATA / f"sr_{uuid.uuid4().hex[:6]}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    ff_exe = str(FFDIR / _ffname)
+    audio_raw = tmp_dir / "source_audio.m4a"
+    try:
+        # 1. Descargar pista de audio rápida
+        if is_tiktok_url(url):
+            try:
+                import urllib.request
+                td = tikwm_fetch(url)
+                m_url = td.get("play") or td.get("hdplay") or td.get("music")
+                if m_url:
+                    req = urllib.request.Request(m_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=25) as resp:
+                        audio_raw.write_bytes(resp.read())
+            except Exception:
+                pass
+        elif is_instagram_url(url):
+            try:
+                import urllib.request
+                ig_d = instagram_embed_fetch(url)
+                m_url = ig_d.get("video_url")
+                if m_url:
+                    req = urllib.request.Request(m_url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.instagram.com/"})
+                    with urllib.request.urlopen(req, timeout=25) as resp:
+                        audio_raw.write_bytes(resp.read())
+            except Exception:
+                pass
+        if not audio_raw.exists() or audio_raw.stat().st_size < 1000:
+            dl_cmd = YTDLP + COOKIE_ARGS + ["--no-playlist", "--no-warnings", "-f", "ba/b", "-o", str(audio_raw), url]
+            subprocess.run(dl_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NOWIN)
+            if not audio_raw.exists():
+                found = list(tmp_dir.glob("source_audio*"))
+                if found:
+                    audio_raw = found[0]
+        if not audio_raw.exists():
+            return []
+
+        # 2. Dividir en bloques WAV PCM 16kHz de 10 segundos (hasta primeros 6 min para velocidad)
+        seg_pattern = str(tmp_dir / "chunk_%03d.wav")
+        subprocess.run([
+            ff_exe, "-y", "-i", str(audio_raw), "-t", "360",
+            "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+            "-f", "segment", "-segment_time", "10", seg_pattern
+        ], capture_output=True, creationflags=NOWIN)
+
+        wav_files = sorted(tmp_dir.glob("chunk_*.wav"))
+        if not wav_files:
+            return []
+
+        sr_lang_map = {"es": "es-MX", "en": "en-US", "pt": "pt-BR", "fr": "fr-FR", "de": "de-DE", "it": "it-IT", "ja": "ja-JP", "ko": "ko-KR"}
+        base_l = (lang or "es").split("-")[0].lower()
+        sr_lang = sr_lang_map.get(base_l, lang or "es-ES")
+
+        def _recognize_chunk(item):
+            idx, wpath = item
+            r = sr.Recognizer()
+            try:
+                with sr.AudioFile(str(wpath)) as source:
+                    audio_data = r.record(source)
+                txt = r.recognize_google(audio_data, language=sr_lang)
+                return idx, (txt or "").strip()
+            except Exception:
+                return idx, ""
+
+        segments = []
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            results = list(ex.map(_recognize_chunk, enumerate(wav_files)))
+        for idx, txt in sorted(results, key=lambda x: x[0]):
+            if txt:
+                s_sec = idx * 10.0
+                e_sec = (idx + 1) * 10.0
+                segments.append({
+                    "start": _fmt_srt_time(s_sec),
+                    "end": _fmt_srt_time(e_sec),
+                    "text": txt
+                })
+        return segments
+    except Exception:
+        return []
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def extract_subtitles(url, lang="es"):
-    """Extrae subtítulos exactos y genera transcripción limpia editable."""
+    """Extrae subtítulos exactos o transcribe por voz IA (en YouTube, Instagram, TikTok, X, etc.)."""
     import urllib.request
     d = INFO_CACHE.get(url)
     if not d:
-        p = subprocess.run(YTDLP + ["-J", "--no-playlist", "--no-warnings", url],
-                           capture_output=True, text=True, encoding="utf-8", creationflags=NOWIN)
-        if p.returncode == 0 and p.stdout.strip():
-            d = json.loads(p.stdout)
+        try:
+            d = run_ytdlp_json(url)
             INFO_CACHE[url] = d
-        elif is_tiktok_url(url):
-            td = tikwm_fetch(url)
-            d = {"title": td.get("title") or "TikTok Video", "duration": td.get("duration") or 15,
-                 "description": td.get("title") or "", "subtitles": {}, "automatic_captions": {}}
-        else:
-            raise RuntimeError("No se pudo analizar el video para extraer subtítulos")
+        except Exception:
+            if is_tiktok_url(url):
+                td = tikwm_fetch(url)
+                d = {"title": td.get("title") or "TikTok Video", "duration": td.get("duration") or 15,
+                     "description": td.get("title") or "", "subtitles": {}, "automatic_captions": {}}
+            else:
+                d = {"title": "Video", "duration": 30, "description": "", "subtitles": {}, "automatic_captions": {}}
     manual_subs = d.get("subtitles") or {}
     auto_subs = d.get("automatic_captions") or {}
 
-    # Seleccionar la mejor pista según el idioma pedido
     chosen_lang = None
     chosen_list = None
     is_auto = False
@@ -655,53 +959,58 @@ def extract_subtitles(url, lang="es"):
 
     segments = []
     if chosen_list:
-        # Priorizar json3 (precisión exacta por evento sin líneas duplicadas) o vtt/srt
         fmt_map = {item.get("ext"): item.get("url") for item in chosen_list if item.get("url")}
         if "json3" in fmt_map:
-            req = urllib.request.Request(fmt_map["json3"], headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=20) as r:
-                j3 = json.loads(r.read().decode("utf-8", errors="replace"))
-            for ev in j3.get("events") or []:
-                segs = ev.get("segs")
-                if not segs:
-                    continue
-                txt = "".join(s.get("utf8", "") for s in segs).replace("\n", " ")
-                txt = re.sub(r"\s+", " ", txt).strip()
-                if not txt:
-                    continue
-                st_ms = int(ev.get("tStartMs") or 0)
-                du_ms = int(ev.get("dDurationMs") or 2500)
-                s_str = _fmt_srt_time(st_ms / 1000.0)
-                e_str = _fmt_srt_time((st_ms + du_ms) / 1000.0)
-                if segments and segments[-1]["text"] == txt:
-                    continue
-                segments.append({"start": s_str, "end": e_str, "text": txt})
-        else:
+            try:
+                req = urllib.request.Request(fmt_map["json3"], headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    j3 = json.loads(r.read().decode("utf-8", errors="replace"))
+                for ev in j3.get("events") or []:
+                    segs = ev.get("segs")
+                    if not segs:
+                        continue
+                    txt = "".join(s.get("utf8", "") for s in segs).replace("\n", " ")
+                    txt = re.sub(r"\s+", " ", txt).strip()
+                    if not txt:
+                        continue
+                    st_ms = int(ev.get("tStartMs") or 0)
+                    du_ms = int(ev.get("dDurationMs") or 2500)
+                    s_str = _fmt_srt_time(st_ms / 1000.0)
+                    e_str = _fmt_srt_time((st_ms + du_ms) / 1000.0)
+                    if segments and segments[-1]["text"] == txt:
+                        continue
+                    segments.append({"start": s_str, "end": e_str, "text": txt})
+            except Exception:
+                pass
+        if not segments:
             sub_url = fmt_map.get("srt") or fmt_map.get("vtt") or next(iter(fmt_map.values()), None)
             if sub_url:
-                req = urllib.request.Request(sub_url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=20) as r:
-                    raw_sub = r.read().decode("utf-8", errors="replace")
-                segments = _parse_vtt_or_srt(raw_sub)
+                try:
+                    req = urllib.request.Request(sub_url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=20) as r:
+                        raw_sub = r.read().decode("utf-8", errors="replace")
+                    segments = _parse_vtt_or_srt(raw_sub)
+                except Exception:
+                    pass
+
+    # Si la plataforma no tiene subtítulos (ej. Instagram Reels, TikTok, Shorts), transcribir el audio por voz IA
+    if not segments:
+        segments = transcribe_audio_with_sr(url, lang=lang)
+        if segments:
+            chosen_lang = f"{lang} (Voz IA)"
+            is_auto = True
 
     if not segments:
-        # Si el video no tiene pistas CC, devolver descripción/guion base editable si existe
-        desc = (d.get("description") or "").strip()
+        desc = (d.get("description") or d.get("title") or "").strip()
         if desc:
             segments = [{"start": "00:00:00,000", "end": _fmt_srt_time(d.get("duration") or 15), "text": desc}]
         else:
-            raise RuntimeError("Este video no cuenta con subtítulos ni pista de transcripción en la plataforma.")
+            raise RuntimeError("No se detectó voz ni subtítulos en este video.")
 
-    # Construir texto corrido limpio de alta legibilidad
-    full_words = []
-    for seg in segments:
-        t = seg["text"].strip()
-        if t:
-            full_words.append(t)
-    full_text = " ".join(full_words)
-    full_text = re.sub(r"\s+", " ", full_text).strip()
+    full_words = [seg["text"].strip() for seg in segments if seg.get("text", "").strip()]
+    full_text = re.sub(r"\s+", " ", " ".join(full_words)).strip()
 
-    all_langs = sorted(set(list(manual_subs.keys()) + [k for k in auto_subs.keys() if "live_chat" not in k]))
+    all_langs = sorted(set(["es", "en"] + list(manual_subs.keys()) + [k for k in auto_subs.keys() if "live_chat" not in k]))
     return {
         "lang": chosen_lang or lang,
         "is_auto": is_auto,
@@ -743,15 +1052,34 @@ def apply_studio_pipeline(job, f_str, kind, opts):
     meta_artist = (opts.get("metaArtist") or "").strip()
     sq_cover = bool(opts.get("squareCover"))
     thumb_url = (opts.get("thumbnail") or "").strip()
+    embed_subs = bool(opts.get("embedSubs")) and kind == "mp4" and vprof != "gif"
+    custom_srt = (opts.get("customSrt") or "").strip()
 
     has_audio_fx = norm_vol or dsp in ("voice", "bass", "slowed", "fast")
-    has_video_fx = vprof in ("edit", "social", "gif") or (kind == "mp4" and dsp == "fast")
+    has_video_fx = vprof in ("edit", "social", "gif") or (kind == "mp4" and dsp == "fast") or embed_subs
     has_meta = bool(meta_title or meta_artist or (sq_cover and kind != "mp4"))
 
     if not (need_local_trim or has_audio_fx or has_video_fx or has_meta):
         return f_str
 
     job["stage"] = "Aplicando Estudio de Edición (FFmpeg)…"
+
+    # Preparar archivo SRT si el usuario activó Agregar Subtítulos al Video MP4
+    srt_tmp = None
+    if embed_subs:
+        try:
+            if not custom_srt and opts.get("url"):
+                job["stage"] = "Extrayendo subtítulos para incrustar en video…"
+                sub_res = extract_subtitles(opts.get("url"), lang=opts.get("subLang") or "es")
+                segs = sub_res.get("segments") or []
+                custom_srt = "\n".join(
+                    f"{i + 1}\n{s['start']} --> {s['end']}\n{s['text'].strip()}\n" for i, s in enumerate(segs)
+                )
+            if custom_srt:
+                srt_tmp = src.parent / f".subs_{uuid.uuid4().hex[:5]}.srt"
+                srt_tmp.write_text(custom_srt + "\n", encoding="utf-8")
+        except Exception:
+            srt_tmp = None
 
     # Construir cadena de filtros de audio (-af)
     af_chain = []
@@ -819,6 +1147,8 @@ def apply_studio_pipeline(job, f_str, kind, opts):
 
     if cover_tmp and cover_tmp.exists():
         cmd += ["-i", str(cover_tmp), "-map", "0:a", "-map", "1:v"]
+    elif srt_tmp and srt_tmp.exists() and kind == "mp4":
+        cmd += ["-i", str(srt_tmp), "-map", "0:v", "-map", "0:a?", "-map", "1:0"]
 
     # Filtros de video y códecs
     if kind == "mp4":
@@ -847,6 +1177,9 @@ def apply_studio_pipeline(job, f_str, kind, opts):
             cmd += ["-c:a", "aac", "-b:a", "192k"]
         else:
             cmd += ["-c:a", "copy"]
+
+        if srt_tmp and srt_tmp.exists():
+            cmd += ["-c:s", "mov_text", "-metadata:s:s:0", "language=spa"]
     else:
         # Modo Audio (MP3, FLAC, WAV, M4A)
         ext_low = src.suffix.lower()
@@ -882,76 +1215,102 @@ def apply_studio_pipeline(job, f_str, kind, opts):
         tmp_out.unlink(missing_ok=True)
         if cover_tmp:
             cover_tmp.unlink(missing_ok=True)
+        if srt_tmp:
+            srt_tmp.unlink(missing_ok=True)
     return f_str
 
 
 def run_job(job_id, url, kind, height, opts=None):
     opts = dict(opts or {})
+    opts["url"] = url
     job = JOBS[job_id]
     out = OUT
     is_tt = is_tiktok_url(url)
+    is_ig = is_instagram_url(url)
     pathfile = out / f".{job_id}.path"
     audio_fmt = (opts.get("audioFormat") or "mp3").lower()
     trim_s = _parse_time_sec(opts.get("trimStart"))
     trim_e = _parse_time_sec(opts.get("trimEnd"))
 
-    cmd = YTDLP + ["--no-playlist", "--no-mtime", "--newline", "--progress", "--no-warnings",
-                   "--progress-template", "download:PROG|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
-                   "--print-to-file", "after_move:filepath", str(pathfile),
-                   "-o", str(out / "%(title).150B [%(id)s].%(ext)s"), "--windows-filenames"]
+    base_args = ["--no-playlist", "--no-mtime", "--newline", "--progress", "--no-warnings",
+                 "--progress-template", "download:PROG|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
+                 "--print-to-file", "after_move:filepath", str(pathfile),
+                 "-o", str(out / "%(title).150B [%(id)s].%(ext)s"), "--windows-filenames"]
 
     if (trim_s is not None or trim_e is not None) and FFDIR and not is_tt:
         s_sec = trim_s if trim_s is not None else 0
         e_sec = trim_e if trim_e is not None else "inf"
-        cmd += ["--download-sections", f"*{s_sec}-{e_sec}", "--force-keyframes-at-cuts"]
+        base_args += ["--download-sections", f"*{s_sec}-{e_sec}", "--force-keyframes-at-cuts"]
         opts["_trimmed_by_ytdlp"] = True
 
     if kind == "mp3":
         if audio_fmt == "flac":
-            cmd += ["-f", "ba/b", "-x", "--audio-format", "flac", "--audio-quality", "0",
-                    "--embed-thumbnail", "--add-metadata"]
+            base_args += ["-f", "ba/b", "-x", "--audio-format", "flac", "--audio-quality", "0",
+                          "--embed-thumbnail", "--add-metadata"]
         elif audio_fmt == "wav":
-            cmd += ["-f", "ba/b", "-x", "--audio-format", "wav", "--audio-quality", "0",
-                    "--add-metadata"]
+            base_args += ["-f", "ba/b", "-x", "--audio-format", "wav", "--audio-quality", "0",
+                          "--add-metadata"]
         elif audio_fmt == "m4a":
-            cmd += ["-f", "ba[ext=m4a]/ba/b", "-x", "--audio-format", "m4a", "--audio-quality", "0",
-                    "--embed-thumbnail", "--add-metadata"]
+            base_args += ["-f", "ba[ext=m4a]/ba/b", "-x", "--audio-format", "m4a", "--audio-quality", "0",
+                          "--embed-thumbnail", "--add-metadata"]
         else:
-            cmd += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
-                    "--embed-thumbnail", "--add-metadata"]
+            base_args += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+                          "--embed-thumbnail", "--add-metadata"]
     elif is_tt:
         res_sort = f"has_watermark,quality,res:{int(height)},tbr,ext:mp4:m4a" if height else "has_watermark,quality,res,tbr,ext:mp4:m4a"
-        cmd += ["-f", "bv*[format_id!=download][format_note!*=watermark]+ba/b[format_id!=download][format_note!*=watermark]",
-                "-S", res_sort, "--merge-output-format", "mp4"]
+        base_args += ["-f", "bv*[format_id!=download][format_note!*=watermark]+ba/b[format_id!=download][format_note!*=watermark]/b",
+                      "-S", res_sort, "--merge-output-format", "mp4"]
     else:
-        h = int(height) if height else 99999
-        res_sort = f"has_watermark,quality,res:{h},ext:mp4:m4a,vcodec:h264" if height else "has_watermark,quality,res,ext:mp4:m4a,vcodec:h264"
-        cmd += ["-f", f"bv*[format_note!*=watermark][height<={h}]+ba/b[format_note!*=watermark][height<={h}]/bv*+ba/b",
-                "-S", res_sort, "--merge-output-format", "mp4"]
-    cmd.append(url)
+        res_sort = f"has_watermark,quality,res:{int(height)},ext:mp4:m4a,vcodec:h264" if height else "has_watermark,quality,res,ext:mp4:m4a,vcodec:h264"
+        base_args += ["-f", "bv*[format_note!*=watermark]+ba/b[format_note!*=watermark]/bv*+ba/b",
+                      "-S", res_sort, "--merge-output-format", "mp4"]
+
+    cookie_attempts = [list(COOKIE_ARGS)]
+    for b in get_installed_browsers():
+        cand = ["--cookies-from-browser", b]
+        if cand not in cookie_attempts:
+            cookie_attempts.append(cand)
+    if [] not in cookie_attempts:
+        cookie_attempts.append([])
+
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                encoding="utf-8", errors="replace", creationflags=NOWIN)
+        f_str = None
         last = ""
-        for line in proc.stdout:
-            line = line.strip()
-            if line.startswith("PROG|"):
-                _, pct, spd, eta = line.split("|")
-                m = re.search(r"[\d.]+", pct)
-                if m:
-                    job["percent"] = float(m.group())
-                job["speed"], job["eta"] = spd.strip(), eta.strip()
-            elif line.startswith(("[Merger]", "[ExtractAudio]", "[VideoConvertor]")):
-                job["stage"] = "Procesando con FFmpeg…"
-            elif line:
-                last = line
-        proc.wait()
-        if proc.returncode == 0 and pathfile.exists() and pathfile.read_text(encoding="utf-8").strip():
-            f_str = pathfile.read_text(encoding="utf-8").strip().splitlines()[-1]
-        elif is_tt:
-            f_str = tikwm_download(job, url, kind, height, out)
-        else:
-            raise RuntimeError(last or "Falló la descarga")
+        for c_args in cookie_attempts:
+            pathfile.unlink(missing_ok=True)
+            cmd = YTDLP + c_args + base_args + [url]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                    encoding="utf-8", errors="replace", creationflags=NOWIN)
+            for line in proc.stdout:
+                line = (line or "").strip()
+                if line.startswith("PROG|"):
+                    _, pct, spd, eta = line.split("|")
+                    m = re.search(r"[\d.]+", pct)
+                    if m:
+                        job["percent"] = float(m.group())
+                    job["speed"], job["eta"] = spd.strip(), eta.strip()
+                elif line.startswith(("[Merger]", "[ExtractAudio]", "[VideoConvertor]")):
+                    job["stage"] = "Procesando con FFmpeg…"
+                elif (line and not line.startswith("WARNING:")
+                      and "Failed to decrypt with DPAPI" not in line
+                      and "Could not copy Chrome cookie database" not in line):
+                    last = line
+            proc.wait()
+            if proc.returncode == 0 and pathfile.exists():
+                pf_txt = (pathfile.read_text(encoding="utf-8", errors="replace") or "").strip()
+                if pf_txt:
+                    f_str = pf_txt.splitlines()[-1]
+                    if c_args != COOKIE_ARGS:
+                        COOKIE_ARGS[:] = c_args
+                    break
+
+        if not f_str:
+            if is_tt:
+                f_str = tikwm_download(job, url, kind, height, out)
+            elif is_ig:
+                f_str = instagram_embed_download(job, url, kind, height, out)
+            else:
+                raise RuntimeError(last or "Falló la descarga")
 
         f_str = apply_studio_pipeline(job, f_str, kind, opts)
         LAST_FILE[0] = f_str
@@ -963,9 +1322,9 @@ def run_job(job_id, url, kind, height, opts=None):
         except Exception:
             pass
     except Exception as e:
-        if is_tt:
+        if is_tt or is_ig:
             try:
-                f_str = tikwm_download(job, url, kind, height, out)
+                f_str = tikwm_download(job, url, kind, height, out) if is_tt else instagram_embed_download(job, url, kind, height, out)
                 f_str = apply_studio_pipeline(job, f_str, kind, opts)
                 LAST_FILE[0] = f_str
                 job["file"] = f_str

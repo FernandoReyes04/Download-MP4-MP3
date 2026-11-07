@@ -84,6 +84,7 @@ if [ -z "$PY" ]; then
 fi
 
 export PATH="$BINDIR:$PATH"
+"$PY" -c "import speech_recognition" 2>/dev/null || "$PY" -m pip install -q SpeechRecognition 2>/dev/null || true
 cd "$RES"
 exec "$PY" "$RES/server.py"
 """
