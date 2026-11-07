@@ -197,8 +197,38 @@ $("dl").onclick = async () => {
 };
 
 $("save").onclick = () => location.href = "/api/file/" + jobId;
-$("folder").onclick = () => post("/api/open", { jobId });
-$("openFolderBtn").onclick = () => post("/api/open", { jobId });
+$("folder").onclick = async () => {
+  const btn = $("folder");
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = "📂 Abriendo Explorador…";
+  try {
+    await post("/api/open", { jobId, reveal: true });
+  } catch (e) {
+    err(e.message);
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }, 600);
+  }
+};
+$("openFolderBtn").onclick = async () => {
+  const btn = $("openFolderBtn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Abriendo…";
+  try {
+    await post("/api/open", { jobId, reveal: Boolean(jobId) });
+  } catch (e) {
+    err(e.message);
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }, 600);
+  }
+};
 
 // ---- Carpeta de destino ----
 const setDestDir = d => {

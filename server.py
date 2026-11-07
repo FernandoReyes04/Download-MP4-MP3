@@ -92,34 +92,86 @@ def browse_folder():
     return r.stdout.strip()
 
 
+def _focus_explorer_window():
+    """Trae la ventana del Explorador de Windows al frente tras abrirla."""
+    if not IS_WIN:
+        return
+    def _worker():
+        try:
+            time.sleep(0.28)
+            u32 = ctypes.windll.user32
+            hwnd = u32.FindWindowW("CabinetWClass", None)
+            if hwnd:
+                u32.keybd_event(0, 0, 0, 0)
+                if u32.IsIconic(hwnd):
+                    u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                else:
+                    u32.ShowWindow(hwnd, 5)  # SW_SHOW
+                u32.SetForegroundWindow(hwnd)
+                u32.BringWindowToTop(hwnd)
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def open_folder(p):
-    p = Path(p).expanduser()
+    p = Path(p).expanduser().resolve()
     p.mkdir(parents=True, exist_ok=True)
     if IS_WIN:
-        os.startfile(p)
+        try:
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)
+            ctypes.windll.user32.keybd_event(0, 0, 0, 0)
+        except Exception:
+            pass
+        subprocess.Popen(f'explorer.exe "{p}"')
+        _focus_explorer_window()
     elif IS_MAC:
         subprocess.Popen(["open", str(p)])
+        subprocess.Popen(["osascript", "-e", 'tell application "Finder" to activate'])
     else:
         subprocess.Popen(["xdg-open", str(p)])
 
 
 def reveal_file(filepath):
-    """Abre el Explorador (Windows) o Finder (macOS) con el archivo descargado seleccionado."""
+    """Abre el Explorador (Windows) o Finder (macOS) en primer plano con el archivo seleccionado."""
     f = Path(filepath).expanduser().resolve()
     if not f.exists():
         open_folder(f.parent)
         return
     if IS_WIN:
-        subprocess.Popen(["explorer.exe", f"/select,{f}"])
+        try:
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)
+            ctypes.windll.user32.keybd_event(0, 0, 0, 0)
+        except Exception:
+            pass
+        # Sintaxis nativa de Windows con comillas solo en la ruta (evita fallo de list2cmdline con /select,)
+        subprocess.Popen(f'explorer.exe /select,"{f}"')
+        _focus_explorer_window()
     elif IS_MAC:
         subprocess.Popen(["open", "-R", str(f)])
+        subprocess.Popen(["osascript", "-e", 'tell application "Finder" to activate'])
     else:
         open_folder(f.parent)
+
+
+def latest_media_file():
+    """Devuelve el archivo descargado más reciente en la carpeta de destino."""
+    if LAST_FILE[0] and Path(LAST_FILE[0]).exists():
+        return str(Path(LAST_FILE[0]).resolve())
+    try:
+        exts = {".mp4", ".mp3", ".mkv", ".webm", ".m4a", ".wav"}
+        files = [p for p in OUT.iterdir() if p.is_file() and p.suffix.lower() in exts]
+        if files:
+            return str(max(files, key=lambda p: p.stat().st_mtime).resolve())
+    except Exception:
+        pass
+    return None
 
 
 OUT = load_out()
 PORT = 8765
 JOBS = {}
+LAST_FILE = [None]
 NOWIN = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
 _ffname = "ffmpeg.exe" if IS_WIN else "ffmpeg"
 FFDIR = BASE / "bin" if (BASE / "bin" / _ffname).exists() else None
@@ -278,7 +330,7 @@ def run_job(job_id, url, kind, height):
     job = JOBS[job_id]
     out = OUT
     pathfile = out / f".{job_id}.path"
-    cmd = YTDLP + ["--no-playlist", "--newline", "--progress", "--no-warnings",
+    cmd = YTDLP + ["--no-playlist", "--no-mtime", "--newline", "--progress", "--no-warnings",
                    "--progress-template", "download:PROG|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
                    "--print-to-file", "after_move:filepath", str(pathfile),
                    "-o", str(out / "%(title).150B [%(id)s].%(ext)s"), "--windows-filenames"]
@@ -310,6 +362,7 @@ def run_job(job_id, url, kind, height):
         if proc.returncode != 0:
             raise RuntimeError(last or "Falló la descarga")
         f_str = pathfile.read_text(encoding="utf-8").strip().splitlines()[-1]
+        LAST_FILE[0] = f_str
         job["file"] = f_str
         job["filename"] = Path(f_str).name
         job["status"], job["percent"] = "done", 100
@@ -364,12 +417,13 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json({"dir": str(OUT)})
             if self.path == "/api/open":
                 jid = data.get("jobId")
-                f = JOBS.get(jid, {}).get("file") if jid else None
-                if f and Path(f).exists():
+                reveal = data.get("reveal", True)
+                f = (JOBS.get(jid, {}).get("file") if jid else None) or latest_media_file()
+                if reveal and f and Path(f).exists():
                     reveal_file(f)
-                else:
-                    open_folder(OUT)
-                return self.send_json({"ok": True})
+                    return self.send_json({"ok": True, "file": str(f)})
+                open_folder(OUT)
+                return self.send_json({"ok": True, "dir": str(OUT)})
             url = (data.get("url") or "").strip()
             if not re.match(r"^https?://", url):
                 return self.send_json({"error": "Pega un enlace válido (http/https)"}, 400)
