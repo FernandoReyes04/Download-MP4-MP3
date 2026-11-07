@@ -172,6 +172,7 @@ OUT = load_out()
 PORT = 8765
 JOBS = {}
 LAST_FILE = [None]
+INFO_CACHE = {}
 NOWIN = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
 _ffname = "ffmpeg.exe" if IS_WIN else "ffmpeg"
 FFDIR = BASE / "bin" if (BASE / "bin" / _ffname).exists() else None
@@ -396,6 +397,52 @@ def _format_res(f):
     return int(h or w or 0)
 
 
+def _clean_metadata(raw_title, raw_uploader):
+    """Limpia títulos de YouTube/TikTok y separa Artista - Canción automáticamente."""
+    t = (raw_title or "").strip()
+    noise = r"(?i)\s*[\(\[]\s*(official\s*(music\s*)?video|video\s*oficial|official\s*audio|audio\s*oficial|lyrics?|letra|hd|4k|8k|hq|visualizer|mv|remastered|live|en\s*vivo)\s*[\)\]]"
+    t = re.sub(noise, "", t).strip()
+    t = re.sub(r"\s+#\w+", "", t).strip()
+    artist = (raw_uploader or "").strip()
+    artist = re.sub(r"(?i)\s*-\s*topic$", "", artist).strip()
+    artist = re.sub(r"(?i)vevo$", "", artist).strip()
+    if " - " in t:
+        parts = t.split(" - ", 1)
+        if len(parts[0].strip()) >= 2 and len(parts[1].strip()) >= 2:
+            artist = parts[0].strip()
+            t = parts[1].strip()
+    return (t or raw_title or "Media"), (artist or raw_uploader or "")
+
+
+def _parse_time_sec(val):
+    """Convierte 'MM:SS', 'HH:MM:SS' o segundos a float."""
+    s = str(val or "").strip()
+    if not s:
+        return None
+    parts = s.split(":")
+    try:
+        if len(parts) == 1:
+            return max(0.0, float(parts[0]))
+        if len(parts) == 2:
+            return max(0.0, int(parts[0]) * 60 + float(parts[1]))
+        if len(parts) == 3:
+            return max(0.0, int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2]))
+    except Exception:
+        return None
+    return None
+
+
+def _fmt_srt_time(sec):
+    sec = max(0.0, float(sec or 0.0))
+    hrs = int(sec // 3600)
+    mins = int((sec % 3600) // 60)
+    secs = int(sec % 60)
+    ms = int(round((sec - int(sec)) * 1000))
+    if ms >= 1000:
+        ms = 999
+    return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
+
+
 def get_info(url):
     is_tt = is_tiktok_url(url)
     p = subprocess.run(YTDLP + ["-J", "--no-playlist", "--no-warnings", url],
@@ -404,17 +451,25 @@ def get_info(url):
         if is_tt:
             d = tikwm_fetch(url)
             author = d.get("author") or {}
+            raw_t = d.get("title") or "TikTok Video"
+            raw_u = author.get("nickname") or author.get("unique_id") or "TikTok"
+            ct, ca = _clean_metadata(raw_t, raw_u)
             return {
-                "title": d.get("title") or "TikTok Video",
+                "title": raw_t,
+                "clean_title": ct,
+                "clean_artist": ca,
                 "thumbnail": d.get("origin_cover") or d.get("cover"),
                 "duration": d.get("duration"),
-                "uploader": author.get("nickname") or author.get("unique_id") or "TikTok",
+                "uploader": raw_u,
                 "site": "TikTok",
                 "heights": [1080, 720, 540],
+                "chapters": [],
+                "sub_langs": [],
                 "no_watermark": True
             }
         raise RuntimeError((p.stderr.strip().splitlines() or ["No se pudo leer el enlace"])[-1])
     d = json.loads(p.stdout)
+    INFO_CACHE[url] = d
     fmts = d.get("formats", [])
     clean_fmts = [f for f in fmts if f.get("vcodec") not in (None, "none")
                   and f.get("format_id") != "download"
@@ -423,26 +478,448 @@ def get_info(url):
     heights = sorted({_format_res(f) for f in use_fmts if _format_res(f) > 0}, reverse=True)
     if is_tt and not heights:
         heights = [1080, 720, 540]
-    return {"title": d.get("title"), "thumbnail": d.get("thumbnail"),
-            "duration": d.get("duration"), "uploader": d.get("uploader"),
-            "site": d.get("extractor_key"), "heights": heights,
-            "no_watermark": is_tt}
+    raw_t = d.get("title") or "Video"
+    raw_u = d.get("uploader") or d.get("channel") or ""
+    ct, ca = _clean_metadata(raw_t, raw_u)
+    chapters = []
+    for i, ch in enumerate(d.get("chapters") or []):
+        chapters.append({
+            "title": ch.get("title") or f"Capítulo {i + 1}",
+            "start": int(ch.get("start_time") or 0),
+            "end": int(ch.get("end_time") or 0)
+        })
+    subs = set((d.get("subtitles") or {}).keys()) | set((d.get("automatic_captions") or {}).keys())
+    pref_order = ["es", "es-419", "es-MX", "es-ES", "en", "en-US", "pt", "fr", "de", "it", "ja", "ko"]
+    sub_langs = [l for l in pref_order if l in subs] + sorted([l for l in subs if l not in pref_order and "live_chat" not in l])[:15]
+    return {
+        "title": raw_t,
+        "clean_title": ct,
+        "clean_artist": ca,
+        "thumbnail": d.get("thumbnail"),
+        "duration": d.get("duration"),
+        "uploader": raw_u,
+        "site": d.get("extractor_key"),
+        "heights": heights,
+        "chapters": chapters,
+        "sub_langs": sub_langs,
+        "no_watermark": is_tt
+    }
 
 
-def run_job(job_id, url, kind, height):
+def download_cover(url, title="", thumbnail="", square=False):
+    """Descarga la portada/miniatura en máxima resolución HD y la selecciona en carpeta."""
+    import urllib.request
+    thumb_url = (thumbnail or "").strip()
+    if not thumb_url:
+        info = get_info(url)
+        thumb_url = info.get("thumbnail") or ""
+        title = title or info.get("clean_title") or info.get("title") or "Portada"
+    if not thumb_url:
+        raise RuntimeError("No se encontró miniatura en este enlace")
+
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", (title or "Portada").strip()).strip(" .")[:120] or "Portada"
+    suffix_tag = "Portada 1x1" if square else "Portada HD"
+    out_file = OUT / f"{safe_title} [{suffix_tag}].jpg"
+    tmp_img = OUT / f".cover_{uuid.uuid4().hex[:6]}.img"
+
+    # Si es miniatura de YouTube, intentar maxresdefault primero
+    yt_m = re.search(r"(?:vi|vi_webp)/([A-Za-z0-9_-]{11})/", thumb_url)
+    urls_to_try = [f"https://i.ytimg.com/vi/{yt_m.group(1)}/maxresdefault.jpg", thumb_url] if yt_m else [thumb_url]
+
+    img_bytes = None
+    for u in urls_to_try:
+        try:
+            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                b = r.read()
+                if len(b) > 2000:
+                    img_bytes = b
+                    break
+        except Exception:
+            continue
+    if not img_bytes:
+        raise RuntimeError("No se pudo descargar la imagen de portada")
+
+    tmp_img.write_bytes(img_bytes)
+    try:
+        if FFDIR:
+            ff_exe = str(FFDIR / _ffname)
+            vf = ["-vf", "crop='min(iw,ih):min(iw,ih)'"] if square else []
+            subprocess.run([ff_exe, "-y", "-i", str(tmp_img)] + vf + ["-q:v", "1", str(out_file)],
+                           capture_output=True, creationflags=NOWIN, check=True)
+        else:
+            shutil.copy2(tmp_img, out_file)
+    finally:
+        tmp_img.unlink(missing_ok=True)
+
+    LAST_FILE[0] = str(out_file)
+    reveal_file(str(out_file))
+    return {"ok": True, "file": str(out_file), "filename": out_file.name}
+
+
+def _parse_vtt_or_srt(raw_text):
+    """Convierte contenido VTT o SRT en segmentos limpios sin duplicados consecutivos."""
+    text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks = re.split(r"\n\s*\n", text)
+    segments = []
+    time_re = re.compile(r"(\d{1,2}:\d{2}:\d{2}[.,]\d{3}|\d{2}:\d{2}[.,]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{3}|\d{2}:\d{2}[.,]\d{3})")
+    for b in blocks:
+        lines = [ln.strip() for ln in b.strip().splitlines() if ln.strip()]
+        if not lines:
+            continue
+        m = None
+        idx_line = 0
+        for i, ln in enumerate(lines[:2]):
+            m = time_re.search(ln)
+            if m:
+                idx_line = i
+                break
+        if not m:
+            continue
+        s_str, e_str = m.group(1).replace(".", ","), m.group(2).replace(".", ",")
+        if s_str.count(":") == 1:
+            s_str = "00:" + s_str
+        if e_str.count(":") == 1:
+            e_str = "00:" + e_str
+        content_lines = lines[idx_line + 1:]
+        clean_txt = " ".join(content_lines)
+        clean_txt = re.sub(r"<[^>]+>", "", clean_txt)
+        clean_txt = re.sub(r"\{[^}]+\}", "", clean_txt)
+        clean_txt = re.sub(r"\s+", " ", clean_txt).strip()
+        if not clean_txt:
+            continue
+        # Evitar duplicados típicos de subtítulos automáticos roll-up de YouTube
+        if segments and segments[-1]["text"] == clean_txt:
+            segments[-1]["end"] = e_str
+            continue
+        if segments and clean_txt.startswith(segments[-1]["text"]) and len(clean_txt) > len(segments[-1]["text"]):
+            segments[-1]["text"] = clean_txt
+            segments[-1]["end"] = e_str
+            continue
+        segments.append({"start": s_str, "end": e_str, "text": clean_txt})
+    return segments
+
+
+def extract_subtitles(url, lang="es"):
+    """Extrae subtítulos exactos y genera transcripción limpia editable."""
+    import urllib.request
+    d = INFO_CACHE.get(url)
+    if not d:
+        p = subprocess.run(YTDLP + ["-J", "--no-playlist", "--no-warnings", url],
+                           capture_output=True, text=True, encoding="utf-8", creationflags=NOWIN)
+        if p.returncode == 0 and p.stdout.strip():
+            d = json.loads(p.stdout)
+            INFO_CACHE[url] = d
+        elif is_tiktok_url(url):
+            td = tikwm_fetch(url)
+            d = {"title": td.get("title") or "TikTok Video", "duration": td.get("duration") or 15,
+                 "description": td.get("title") or "", "subtitles": {}, "automatic_captions": {}}
+        else:
+            raise RuntimeError("No se pudo analizar el video para extraer subtítulos")
+    manual_subs = d.get("subtitles") or {}
+    auto_subs = d.get("automatic_captions") or {}
+
+    # Seleccionar la mejor pista según el idioma pedido
+    chosen_lang = None
+    chosen_list = None
+    is_auto = False
+
+    def _find_track(sub_dict, target):
+        if target in sub_dict:
+            return target, sub_dict[target]
+        for k, v in sub_dict.items():
+            if k.lower().startswith(target.lower() + "-"):
+                return k, v
+        return None, None
+
+    chosen_lang, chosen_list = _find_track(manual_subs, lang)
+    if not chosen_list:
+        chosen_lang, chosen_list = _find_track(auto_subs, lang)
+        is_auto = True
+    if not chosen_list:
+        for fallback in ("es", "en"):
+            chosen_lang, chosen_list = _find_track(manual_subs, fallback)
+            if chosen_list:
+                is_auto = False
+                break
+            chosen_lang, chosen_list = _find_track(auto_subs, fallback)
+            if chosen_list:
+                is_auto = True
+                break
+    if not chosen_list:
+        for k, v in list(manual_subs.items()) + list(auto_subs.items()):
+            if "live_chat" not in k and v:
+                chosen_lang, chosen_list = k, v
+                is_auto = k not in manual_subs
+                break
+
+    segments = []
+    if chosen_list:
+        # Priorizar json3 (precisión exacta por evento sin líneas duplicadas) o vtt/srt
+        fmt_map = {item.get("ext"): item.get("url") for item in chosen_list if item.get("url")}
+        if "json3" in fmt_map:
+            req = urllib.request.Request(fmt_map["json3"], headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                j3 = json.loads(r.read().decode("utf-8", errors="replace"))
+            for ev in j3.get("events") or []:
+                segs = ev.get("segs")
+                if not segs:
+                    continue
+                txt = "".join(s.get("utf8", "") for s in segs).replace("\n", " ")
+                txt = re.sub(r"\s+", " ", txt).strip()
+                if not txt:
+                    continue
+                st_ms = int(ev.get("tStartMs") or 0)
+                du_ms = int(ev.get("dDurationMs") or 2500)
+                s_str = _fmt_srt_time(st_ms / 1000.0)
+                e_str = _fmt_srt_time((st_ms + du_ms) / 1000.0)
+                if segments and segments[-1]["text"] == txt:
+                    continue
+                segments.append({"start": s_str, "end": e_str, "text": txt})
+        else:
+            sub_url = fmt_map.get("srt") or fmt_map.get("vtt") or next(iter(fmt_map.values()), None)
+            if sub_url:
+                req = urllib.request.Request(sub_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    raw_sub = r.read().decode("utf-8", errors="replace")
+                segments = _parse_vtt_or_srt(raw_sub)
+
+    if not segments:
+        # Si el video no tiene pistas CC, devolver descripción/guion base editable si existe
+        desc = (d.get("description") or "").strip()
+        if desc:
+            segments = [{"start": "00:00:00,000", "end": _fmt_srt_time(d.get("duration") or 15), "text": desc}]
+        else:
+            raise RuntimeError("Este video no cuenta con subtítulos ni pista de transcripción en la plataforma.")
+
+    # Construir texto corrido limpio de alta legibilidad
+    full_words = []
+    for seg in segments:
+        t = seg["text"].strip()
+        if t:
+            full_words.append(t)
+    full_text = " ".join(full_words)
+    full_text = re.sub(r"\s+", " ", full_text).strip()
+
+    all_langs = sorted(set(list(manual_subs.keys()) + [k for k in auto_subs.keys() if "live_chat" not in k]))
+    return {
+        "lang": chosen_lang or lang,
+        "is_auto": is_auto,
+        "available_langs": all_langs[:25],
+        "segments": segments,
+        "full_text": full_text,
+        "title": d.get("title") or "Transcripcion"
+    }
+
+
+def save_subtitles_file(title, fmt, content):
+    """Guarda los subtítulos editados (.srt) o la transcripción en texto (.txt) y lo muestra en carpeta."""
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", (title or "Transcripcion").strip()).strip(" .")[:120] or "Transcripcion"
+    ext = "srt" if str(fmt).lower() == "srt" else "txt"
+    tag = "Subtitulos" if ext == "srt" else "Transcripcion"
+    out_file = OUT / f"{safe_title} [{tag}].{ext}"
+    out_file.write_text((content or "").strip() + "\n", encoding="utf-8")
+    LAST_FILE[0] = str(out_file)
+    reveal_file(str(out_file))
+    return {"ok": True, "file": str(out_file), "filename": out_file.name}
+
+
+def apply_studio_pipeline(job, f_str, kind, opts):
+    """Aplica recorte, normalización EBU R128, efectos DSP, perfiles Premiere/WhatsApp/GIF y metadatos 1:1."""
+    if not FFDIR or not opts:
+        return f_str
+    src = Path(f_str)
+    if not src.exists():
+        return f_str
+
+    ff_exe = str(FFDIR / _ffname)
+    trim_s = _parse_time_sec(opts.get("trimStart"))
+    trim_e = _parse_time_sec(opts.get("trimEnd"))
+    need_local_trim = (trim_s is not None or trim_e is not None) and not opts.get("_trimmed_by_ytdlp")
+    norm_vol = bool(opts.get("normVol"))
+    dsp = (opts.get("dspEffect") or "none").strip()
+    vprof = (opts.get("videoProfile") or "original").strip() if kind == "mp4" else "original"
+    meta_title = (opts.get("metaTitle") or "").strip()
+    meta_artist = (opts.get("metaArtist") or "").strip()
+    sq_cover = bool(opts.get("squareCover"))
+    thumb_url = (opts.get("thumbnail") or "").strip()
+
+    has_audio_fx = norm_vol or dsp in ("voice", "bass", "slowed", "fast")
+    has_video_fx = vprof in ("edit", "social", "gif") or (kind == "mp4" and dsp == "fast")
+    has_meta = bool(meta_title or meta_artist or (sq_cover and kind != "mp4"))
+
+    if not (need_local_trim or has_audio_fx or has_video_fx or has_meta):
+        return f_str
+
+    job["stage"] = "Aplicando Estudio de Edición (FFmpeg)…"
+
+    # Construir cadena de filtros de audio (-af)
+    af_chain = []
+    if dsp == "voice":
+        af_chain.append("highpass=f=85,lowpass=f=12000,afftdn=nf=-25,acompressor=threshold=-18dB:ratio=3:attack=15:release=150")
+    elif dsp == "bass":
+        af_chain.append("equalizer=f=65:width_type=o:width=1.2:g=5.5,alimiter=limit=0.95")
+    elif dsp == "slowed":
+        af_chain.append("asetrate=44100*0.86,aresample=44100,aecho=0.8:0.88:55:0.22")
+    elif dsp == "fast":
+        af_chain.append("atempo=1.25")
+    if norm_vol:
+        af_chain.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+
+    # Determinar extensión y nombre final
+    out_ext = ".gif" if vprof == "gif" else src.suffix
+    if meta_title:
+        base_label = f"{meta_artist} - {meta_title}" if meta_artist else meta_title
+        safe_base = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", base_label).strip(" .")[:140]
+        final_dest = src.parent / f"{safe_base}{out_ext}"
+    else:
+        final_dest = src.with_suffix(out_ext)
+
+    tmp_out = src.parent / f".studio_{uuid.uuid4().hex[:6]}{out_ext}"
+    cmd = [ff_exe, "-y"]
+    if need_local_trim and trim_s is not None:
+        cmd += ["-ss", str(trim_s)]
+    cmd += ["-i", str(src)]
+    if need_local_trim and trim_e is not None:
+        if trim_s is not None and trim_e > trim_s:
+            cmd += ["-t", str(trim_e - trim_s)]
+        elif trim_s is None:
+            cmd += ["-to", str(trim_e)]
+
+    # Si es GIF Animado HD con paleta de 256 colores
+    if vprof == "gif":
+        job["stage"] = "Generando GIF Animado HD (Paleta 256c)…"
+        vf_gif = "fps=15,scale='min(600,iw)':-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"
+        cmd += ["-vf", vf_gif, "-loop", "0", str(tmp_out)]
+        r = subprocess.run(cmd, capture_output=True, creationflags=NOWIN)
+        if r.returncode == 0 and tmp_out.exists():
+            src.unlink(missing_ok=True)
+            os.replace(tmp_out, final_dest)
+            return str(final_dest)
+        tmp_out.unlink(missing_ok=True)
+        return f_str
+
+    # Portada cuadrada 1:1 para archivos de audio (MP3 / FLAC / M4A)
+    cover_tmp = None
+    if kind != "mp4" and sq_cover and thumb_url and src.suffix.lower() in (".mp3", ".flac", ".m4a"):
+        try:
+            import urllib.request
+            cover_raw = src.parent / f".covraw_{uuid.uuid4().hex[:5]}.jpg"
+            cover_tmp = src.parent / f".covsq_{uuid.uuid4().hex[:5]}.jpg"
+            req = urllib.request.Request(thumb_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                cover_raw.write_bytes(resp.read())
+            subprocess.run([ff_exe, "-y", "-i", str(cover_raw), "-vf", "crop='min(iw,ih):min(iw,ih)',scale=800:800", "-q:v", "2", str(cover_tmp)],
+                           capture_output=True, creationflags=NOWIN, check=True)
+            cover_raw.unlink(missing_ok=True)
+        except Exception:
+            if cover_tmp:
+                cover_tmp.unlink(missing_ok=True)
+            cover_tmp = None
+
+    if cover_tmp and cover_tmp.exists():
+        cmd += ["-i", str(cover_tmp), "-map", "0:a", "-map", "1:v"]
+
+    # Filtros de video y códecs
+    if kind == "mp4":
+        vf_chain = []
+        if dsp == "fast":
+            vf_chain.append("setpts=0.8*PTS")
+        if vprof == "social":
+            vf_chain.append("scale='min(1280,iw)':-2")
+        if vf_chain:
+            cmd += ["-vf", ",".join(vf_chain)]
+
+        if vprof == "edit":
+            job["stage"] = "Optimizando para Edición (H.264 Fluido)…"
+            cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+        elif vprof == "social":
+            job["stage"] = "Optimizando para WhatsApp / Discord…"
+            cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "24", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+        elif vf_chain:
+            cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p"]
+        else:
+            cmd += ["-c:v", "copy"]
+
+        if af_chain:
+            cmd += ["-af", ",".join(af_chain), "-c:a", "aac", "-b:a", "256k"]
+        elif vprof in ("edit", "social"):
+            cmd += ["-c:a", "aac", "-b:a", "192k"]
+        else:
+            cmd += ["-c:a", "copy"]
+    else:
+        # Modo Audio (MP3, FLAC, WAV, M4A)
+        ext_low = src.suffix.lower()
+        if af_chain:
+            cmd += ["-af", ",".join(af_chain)]
+            if ext_low == ".mp3":
+                cmd += ["-c:a", "libmp3lame", "-q:a", "0"]
+            elif ext_low == ".flac":
+                cmd += ["-c:a", "flac"]
+            elif ext_low == ".wav":
+                cmd += ["-c:a", "pcm_s16le"]
+            else:
+                cmd += ["-c:a", "aac", "-b:a", "256k"]
+        else:
+            cmd += ["-c:a", "copy"]
+
+        if cover_tmp and cover_tmp.exists():
+            cmd += ["-c:v", "mjpeg", "-disposition:v", "attached_pic"]
+
+    if meta_title:
+        cmd += ["-metadata", f"title={meta_title}"]
+    if meta_artist:
+        cmd += ["-metadata", f"artist={meta_artist}"]
+
+    cmd.append(str(tmp_out))
+    try:
+        r = subprocess.run(cmd, capture_output=True, creationflags=NOWIN)
+        if r.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0:
+            src.unlink(missing_ok=True)
+            os.replace(tmp_out, final_dest)
+            return str(final_dest)
+    finally:
+        tmp_out.unlink(missing_ok=True)
+        if cover_tmp:
+            cover_tmp.unlink(missing_ok=True)
+    return f_str
+
+
+def run_job(job_id, url, kind, height, opts=None):
+    opts = dict(opts or {})
     job = JOBS[job_id]
     out = OUT
     is_tt = is_tiktok_url(url)
     pathfile = out / f".{job_id}.path"
+    audio_fmt = (opts.get("audioFormat") or "mp3").lower()
+    trim_s = _parse_time_sec(opts.get("trimStart"))
+    trim_e = _parse_time_sec(opts.get("trimEnd"))
+
     cmd = YTDLP + ["--no-playlist", "--no-mtime", "--newline", "--progress", "--no-warnings",
                    "--progress-template", "download:PROG|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
                    "--print-to-file", "after_move:filepath", str(pathfile),
                    "-o", str(out / "%(title).150B [%(id)s].%(ext)s"), "--windows-filenames"]
+
+    if (trim_s is not None or trim_e is not None) and FFDIR and not is_tt:
+        s_sec = trim_s if trim_s is not None else 0
+        e_sec = trim_e if trim_e is not None else "inf"
+        cmd += ["--download-sections", f"*{s_sec}-{e_sec}", "--force-keyframes-at-cuts"]
+        opts["_trimmed_by_ytdlp"] = True
+
     if kind == "mp3":
-        cmd += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
-                "--embed-thumbnail", "--add-metadata"]
+        if audio_fmt == "flac":
+            cmd += ["-f", "ba/b", "-x", "--audio-format", "flac", "--audio-quality", "0",
+                    "--embed-thumbnail", "--add-metadata"]
+        elif audio_fmt == "wav":
+            cmd += ["-f", "ba/b", "-x", "--audio-format", "wav", "--audio-quality", "0",
+                    "--add-metadata"]
+        elif audio_fmt == "m4a":
+            cmd += ["-f", "ba[ext=m4a]/ba/b", "-x", "--audio-format", "m4a", "--audio-quality", "0",
+                    "--embed-thumbnail", "--add-metadata"]
+        else:
+            cmd += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+                    "--embed-thumbnail", "--add-metadata"]
     elif is_tt:
-        # En TikTok: excluir siempre cualquier formato con marca de agua ('download' o note='watermarked')
         res_sort = f"has_watermark,quality,res:{int(height)},tbr,ext:mp4:m4a" if height else "has_watermark,quality,res,tbr,ext:mp4:m4a"
         cmd += ["-f", "bv*[format_id!=download][format_note!*=watermark]+ba/b[format_id!=download][format_note!*=watermark]",
                 "-S", res_sort, "--merge-output-format", "mp4"]
@@ -472,10 +949,11 @@ def run_job(job_id, url, kind, height):
         if proc.returncode == 0 and pathfile.exists() and pathfile.read_text(encoding="utf-8").strip():
             f_str = pathfile.read_text(encoding="utf-8").strip().splitlines()[-1]
         elif is_tt:
-            # Respaldo automático HD sin marca de agua vía CDN directo (TikWM)
             f_str = tikwm_download(job, url, kind, height, out)
         else:
             raise RuntimeError(last or "Falló la descarga")
+
+        f_str = apply_studio_pipeline(job, f_str, kind, opts)
         LAST_FILE[0] = f_str
         job["file"] = f_str
         job["filename"] = Path(f_str).name
@@ -488,6 +966,7 @@ def run_job(job_id, url, kind, height):
         if is_tt:
             try:
                 f_str = tikwm_download(job, url, kind, height, out)
+                f_str = apply_studio_pipeline(job, f_str, kind, opts)
                 LAST_FILE[0] = f_str
                 job["file"] = f_str
                 job["filename"] = Path(f_str).name
@@ -552,16 +1031,29 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json({"ok": True, "file": str(f)})
                 open_folder(OUT)
                 return self.send_json({"ok": True, "dir": str(OUT)})
+            if self.path == "/api/subtitles/save":
+                return self.send_json(save_subtitles_file(
+                    data.get("title", ""), data.get("format", "txt"), data.get("content", "")
+                ))
             url = (data.get("url") or "").strip()
             if not re.match(r"^https?://", url):
                 return self.send_json({"error": "Pega un enlace válido (http/https)"}, 400)
             if self.path == "/api/info":
                 return self.send_json(get_info(url))
+            if self.path == "/api/cover":
+                return self.send_json(download_cover(
+                    url, title=data.get("title", ""), thumbnail=data.get("thumbnail", ""), square=bool(data.get("square"))
+                ))
+            if self.path == "/api/subtitles":
+                return self.send_json(extract_subtitles(url, lang=data.get("lang", "es")))
             if self.path == "/api/download":
                 jid = uuid.uuid4().hex[:10]
                 JOBS[jid] = {"status": "running", "percent": 0, "speed": "", "eta": "", "stage": "Descargando…"}
-                threading.Thread(target=run_job, args=(jid, url, data.get("kind", "mp4"), data.get("height")),
-                                 daemon=True).start()
+                threading.Thread(
+                    target=run_job,
+                    args=(jid, url, data.get("kind", "mp4"), data.get("height"), data.get("opts")),
+                    daemon=True
+                ).start()
                 return self.send_json({"id": jid})
             self.send_json({"error": "not found"}, 404)
         except Exception as e:

@@ -555,6 +555,142 @@ button:disabled {
   border: 1px solid rgba(16, 185, 129, 0.35);
   font-weight: 620;
 }
+.badge-action {
+  cursor: pointer;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #ffffff;
+  font-weight: 600;
+  transition: transform 0.25s var(--liquid), background 0.2s, box-shadow 0.2s;
+}
+.badge-action:hover {
+  background: #ffffff;
+  transform: translateY(-1.5px) scale(1.03);
+  box-shadow: 0 5px 12px rgba(15, 23, 42, 0.1);
+}
+.badge-action.active {
+  background: #12141a;
+  color: #ffffff;
+  border-color: #12141a;
+}
+.thumb-cover-btn {
+  position: absolute;
+  bottom: 5px;
+  right: 5px;
+  padding: 3px 8px;
+  font-size: 0.68rem;
+  font-weight: 620;
+  border-radius: 999px;
+  background: rgba(18, 20, 26, 0.76);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: transform 0.25s var(--liquid), background 0.2s;
+}
+.thumb-cover-btn:hover {
+  background: #12141a;
+  transform: scale(1.05);
+}
+
+/* Modales de Estudio y Subtítulos */
+.modal-sheet.studio-sheet {
+  max-width: 620px;
+  width: 94%;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 20px 22px;
+}
+.studio-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.studio-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.studio-section {
+  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 16px;
+  padding: 11px 13px;
+  margin-bottom: 10px;
+}
+.studio-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.studio-select {
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.78);
+  font-family: inherit;
+  font-size: 0.84rem;
+  color: var(--text-main);
+  outline: none;
+  margin-bottom: 8px;
+}
+.transcript-area {
+  width: 100%;
+  height: 250px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.82);
+  font-family: inherit;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--text-main);
+  resize: none;
+  outline: none;
+  box-shadow: inset 0 2px 5px rgba(15, 23, 42, 0.04);
+}
+.srt-list {
+  max-height: 250px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+.srt-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid #ffffff;
+  border-radius: 11px;
+  padding: 6px 9px;
+}
+.srt-time {
+  font-size: 0.72rem;
+  font-weight: 620;
+  color: var(--text-muted);
+  white-space: nowrap;
+  background: rgba(15, 23, 42, 0.05);
+  padding: 3px 7px;
+  border-radius: 7px;
+}
+.srt-input {
+  flex: 1;
+  padding: 5px 8px !important;
+  font-size: 0.84rem !important;
+  border-radius: 8px !important;
+}
 
 /* Calidades (Píldoras compactas adaptativas) */
 .options-chips {
@@ -920,6 +1056,7 @@ footer span.link:hover { color: var(--text-main); }
     <div class="media-preview">
       <div class="thumb-wrap">
         <img id="thumb" alt="Miniatura">
+        <button type="button" id="coverBtn" class="thumb-cover-btn" title="Descargar miniatura en máxima calidad HD">🖼️ Portada HD</button>
       </div>
       <div class="media-meta">
         <h2 id="title">Título del video</h2>
@@ -928,14 +1065,16 @@ footer span.link:hover { color: var(--text-main); }
           <span class="badge badge-clean hide" id="noWmBadge">✨ Sin marca de agua</span>
           <span class="badge" id="uploaderBadge">Canal</span>
           <span class="badge" id="durationBadge">0:00</span>
+          <button type="button" class="badge badge-action" id="openStudioBtn">🎛️ Estudio</button>
+          <button type="button" class="badge badge-action" id="openSubsBtn">💬 Subtítulos / Texto</button>
         </div>
       </div>
     </div>
 
     <div class="segmented-control" id="segmented" data-mode="mp4">
       <div class="segmented-slider"></div>
-      <button type="button" class="segmented-btn active" id="tmp4">🎬 Video MP4</button>
-      <button type="button" class="segmented-btn" id="tmp3">🎵 Audio MP3</button>
+      <button type="button" class="segmented-btn active" id="tmp4">🎬 Video</button>
+      <button type="button" class="segmented-btn" id="tmp3">🎧 Audio Puro / Estudio</button>
     </div>
 
     <div class="options-chips" id="opts"></div>
@@ -1040,6 +1179,150 @@ footer span.link:hover { color: var(--text-main); }
         <button id="wizardBackBtn" class="ghost" type="button">Atrás</button>
         <button id="wizardFinishBtn" class="primary" type="button">Instalar y Comenzar</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Estudio Integrado de Video & Audio -->
+<div class="modal-overlay hide" id="studioModal">
+  <div class="modal-sheet studio-sheet">
+    <div class="studio-header">
+      <div>
+        <h2>🎛️ Estudio de Edición (Video y Audio)</h2>
+        <p class="modal-sub" style="margin-bottom: 0;">Recorte exacto, normalización EBU R128, efectos DSP, perfiles de edición y metadatos</p>
+      </div>
+      <button type="button" id="closeStudioBtn" class="ghost" style="padding: 6px 12px;">✕</button>
+    </div>
+
+    <!-- Sección 1: Recorte y Capítulos -->
+    <div class="studio-section">
+      <div class="studio-section-title">
+        <span>✂️ Recorte de Fragmento y Capítulos</span>
+        <span id="chapterCountBadge" class="hide" style="color: #059669; font-size: 0.7rem;">Capítulos detectados</span>
+      </div>
+      <select id="chapterSelect" class="studio-select hide">
+        <option value="">📑 Seleccionar capítulo del video (Opcional)…</option>
+      </select>
+      <div class="studio-grid" style="margin-bottom: 0;">
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Inicio (ej. 00:30)</label>
+          <input id="trimStart" type="text" placeholder="00:00 (Desde el inicio)" style="margin-top: 3px; padding: 7px 11px;">
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Fin (ej. 01:45)</label>
+          <input id="trimEnd" type="text" placeholder="Final del video" style="margin-top: 3px; padding: 7px 11px;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Sección 2: Normalizador y Efectos de Audio DSP -->
+    <div class="studio-section">
+      <div class="studio-section-title">
+        <span>🔊 Sonido de Estudio &amp; Efectos DSP (FFmpeg)</span>
+      </div>
+      <label class="custom-checkbox" style="margin-bottom: 8px; padding: 7px 11px;">
+        <input type="checkbox" id="normVolCheck">
+        <span><strong>Normalizar volumen (Loudness EBU R128)</strong> · Iguala voces y música baja sin saturar</span>
+      </label>
+      <div class="options-chips" id="dspChips" style="margin-bottom: 0;">
+        <span class="chip on" data-dsp="none">✨ Puro (Sin efectos)</span>
+        <span class="chip" data-dsp="voice">🎙️ Voz Limpia / Podcast</span>
+        <span class="chip" data-dsp="bass">🎸 Bass Boost Hi-Fi</span>
+        <span class="chip" data-dsp="slowed">🌙 Slowed + Reverb</span>
+        <span class="chip" data-dsp="fast">⚡ Velocidad 1.25x</span>
+      </div>
+    </div>
+
+    <!-- Sección 3: Perfiles de Exportación de Video / GIF HD -->
+    <div class="studio-section">
+      <div class="studio-section-title">
+        <span>🎬 Perfil de Exportación de Video / GIF</span>
+      </div>
+      <div class="options-chips" id="vprofChips" style="margin-bottom: 0;">
+        <span class="chip on" data-vprof="original">⭐ Original (Máxima calidad)</span>
+        <span class="chip" data-vprof="edit">🎞️ Modo Edición (Premiere / DaVinci H.264)</span>
+        <span class="chip" data-vprof="social">💬 Modo Ligero (WhatsApp / Discord)</span>
+        <span class="chip" data-vprof="gif">✨ Convertir recorte a GIF HD</span>
+      </div>
+    </div>
+
+    <!-- Sección 4: Metadatos Limpios y Portada 1:1 -->
+    <div class="studio-section" style="margin-bottom: 12px;">
+      <div class="studio-section-title">
+        <span>🏷️ Limpiador de Metadatos &amp; Portada 1:1 (Apple Music / Spotify)</span>
+      </div>
+      <div class="studio-grid">
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Título limpio</label>
+          <input id="metaTitle" type="text" placeholder="Título de la canción o video" style="margin-top: 3px; padding: 7px 11px;">
+        </div>
+        <div>
+          <label style="font-size: 0.72rem; color: var(--text-muted);">Artista / Canal</label>
+          <input id="metaArtist" type="text" placeholder="Nombre del artista" style="margin-top: 3px; padding: 7px 11px;">
+        </div>
+      </div>
+      <div class="row" style="justify-content: space-between;">
+        <label class="custom-checkbox" style="margin-bottom: 0; flex: 1; padding: 7px 11px;">
+          <input type="checkbox" id="squareCoverCheck">
+          <span>Recortar carátula cuadrada <strong>1:1</strong> al incrustar en Audio</span>
+        </label>
+        <button type="button" id="saveSquareCoverBtn" class="ghost" style="padding: 8px 12px; font-size: 0.78rem;">🖼️ Bajar Portada 1:1</button>
+      </div>
+    </div>
+
+    <div class="modal-nav" style="margin-top: 8px;">
+      <button type="button" id="resetStudioBtn" class="ghost">Restablecer</button>
+      <button type="button" id="applyStudioBtn" class="primary">Guardar ajustes del Estudio</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Extractor y Editor de Subtítulos (.SRT) y Transcripción (.TXT) -->
+<div class="modal-overlay hide" id="subsModal">
+  <div class="modal-sheet studio-sheet">
+    <div class="studio-header">
+      <div>
+        <h2>💬 Subtítulos (.SRT) y Transcripción Editable</h2>
+        <p class="modal-sub" style="margin-bottom: 0;">Edita el texto con precisión milimétrica y expórtalo como guion limpio o subtítulos</p>
+      </div>
+      <button type="button" id="closeSubsBtn" class="ghost" style="padding: 6px 12px;">✕</button>
+    </div>
+
+    <div class="row" style="margin-bottom: 10px;">
+      <select id="subLangSelect" class="studio-select" style="margin-bottom: 0; flex: 1;">
+        <option value="es">Español (es)</option>
+        <option value="en">Inglés (en)</option>
+      </select>
+      <button type="button" id="fetchSubsBtn" class="primary" style="padding: 8px 14px; font-size: 0.82rem;">Extraer del video</button>
+    </div>
+
+    <div class="segmented-control" id="subsViewSeg" data-mode="mp4" style="margin-bottom: 10px;">
+      <div class="segmented-slider"></div>
+      <button type="button" class="segmented-btn active" id="viewTxtBtn">📝 Transcripción en Texto Editable</button>
+      <button type="button" class="segmented-btn" id="viewSrtBtn">⏱️ Bloques de Subtítulos (.SRT)</button>
+    </div>
+
+    <div id="subsLoading" class="skel-status hide" style="padding: 28px 0;">
+      <span class="btn-spinner" style="border-color: rgba(18,20,26,0.2); border-top-color: #12141a;"></span>
+      <span>Extrayendo subtítulos y generando transcripción de alta precisión…</span>
+    </div>
+
+    <div id="txtViewWrap">
+      <textarea id="transcriptEditor" class="transcript-area" placeholder="Aquí aparecerá la transcripción completa y limpia del video para que puedas editarla, copiarla o guardarla…"></textarea>
+      <div style="display: flex; justify-content: space-between; font-size: 0.73rem; color: var(--text-muted); margin-top: 5px;">
+        <span id="subsStatusTxt">Listo para editar</span>
+        <span id="wordCountTxt">0 palabras</span>
+      </div>
+    </div>
+
+    <div id="srtViewWrap" class="hide">
+      <div id="srtList" class="srt-list"></div>
+    </div>
+
+    <div class="modal-nav" style="margin-top: 12px;">
+      <button type="button" id="copyTranscriptBtn" class="ghost">📋 Copiar texto</button>
+      <button type="button" id="saveTxtBtn" class="ghost">💾 Guardar .TXT</button>
+      <button type="button" id="saveSrtBtn" class="primary">🎬 Guardar .SRT Editable</button>
     </div>
   </div>
 </div>

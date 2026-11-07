@@ -1,5 +1,6 @@
 const $ = id => document.getElementById(id);
 let kind = "mp4", height = null, jobId = null, info = null, toastTimer = null;
+let audioFormat = "mp3", dspEffect = "none", videoProfile = "original", srtSegments = [];
 
 const post = async (path, body) => {
   const r = await fetch(path, {
@@ -57,25 +58,80 @@ function showCompletionToast(filename) {
   playSuccessChime();
 }
 
-// ---- Control Segmentado (MP4 / MP3) con Slider ----
+// ---- Control Segmentado (Video / Audio Puro) con Slider ----
+function updateDlBtnLabel() {
+  const hasStudio = isStudioActive();
+  const suffix = hasStudio ? " · 🎛️ Estudio" : "";
+  if (kind === "mp4") {
+    if (videoProfile === "gif") $("dl").textContent = "Descargar GIF Animado HD" + suffix;
+    else if (videoProfile === "edit") $("dl").textContent = "Descargar Video MP4 (Premiere / DaVinci)" + suffix;
+    else if (videoProfile === "social") $("dl").textContent = "Descargar Video MP4 (WhatsApp / Discord)" + suffix;
+    else $("dl").textContent = "Descargar Video MP4" + suffix;
+  } else {
+    const labels = {
+      mp3: "Descargar Audio MP3 (320 kbps)",
+      m4a: "Descargar Audio M4A (Original Puro)",
+      flac: "Descargar Audio FLAC (Lossless)",
+      wav: "Descargar Audio WAV (PCM Estudio)"
+    };
+    $("dl").textContent = (labels[audioFormat] || labels.mp3) + suffix;
+  }
+}
+
+function isStudioActive() {
+  return Boolean(
+    $("trimStart").value.trim() ||
+    $("trimEnd").value.trim() ||
+    $("normVolCheck").checked ||
+    dspEffect !== "none" ||
+    videoProfile !== "original" ||
+    $("squareCoverCheck").checked
+  );
+}
+
+function updateStudioBadge() {
+  const active = isStudioActive();
+  const btn = $("openStudioBtn");
+  btn.classList.toggle("active", active);
+  btn.textContent = active ? "🎛️ Estudio ●" : "🎛️ Estudio";
+  updateDlBtnLabel();
+}
+
 function setKind(k) {
   kind = k;
   $("segmented").setAttribute("data-mode", k);
   $("tmp4").classList.toggle("active", k === "mp4");
   $("tmp3").classList.toggle("active", k === "mp3");
-  $("dl").textContent = k === "mp4" ? "Descargar Video MP4" : "Descargar Audio MP3 (320 kbps)";
   renderOpts();
+  updateDlBtnLabel();
 }
 
 $("tmp4").onclick = () => setKind("mp4");
 $("tmp3").onclick = () => setKind("mp3");
 
-// ---- Opciones de Calidad ----
+// ---- Opciones de Calidad y Formatos de Sonido Puro ----
 function renderOpts() {
   const o = $("opts");
   o.innerHTML = "";
   if (kind === "mp3") {
-    o.innerHTML = '<span class="chip on">🎵 MP3 · Mejor Calidad (VBR ~320 kbps)</span>';
+    const audioFormats = [
+      { id: "m4a", label: "⭐ M4A Original (Puro)" },
+      { id: "flac", label: "💎 FLAC (Lossless)" },
+      { id: "wav", label: "🎛️ WAV (PCM Estudio)" },
+      { id: "mp3", label: "🎵 MP3 (320 kbps)" }
+    ];
+    audioFormats.forEach(af => {
+      const c = document.createElement("span");
+      c.className = "chip" + (audioFormat === af.id ? " on" : "");
+      c.textContent = af.label;
+      c.onclick = () => {
+        audioFormat = af.id;
+        [...o.children].forEach(x => x.classList.remove("on"));
+        c.classList.add("on");
+        updateDlBtnLabel();
+      };
+      o.appendChild(c);
+    });
     return;
   }
   const hs = [null, ...((info && info.heights) || [])];
@@ -130,9 +186,47 @@ $("go").onclick = async () => {
     $("uploaderBadge").textContent = info.uploader || "";
     $("durationBadge").textContent = fmt(info.duration) || "";
 
+    // Rellenar metadatos limpios y capítulos en el Estudio
+    $("metaTitle").value = info.clean_title || info.title || "";
+    $("metaArtist").value = info.clean_artist || info.uploader || "";
+    $("trimStart").value = "";
+    $("trimEnd").value = "";
+    const chSel = $("chapterSelect");
+    chSel.innerHTML = '<option value="">📑 Seleccionar capítulo del video (Opcional)…</option>';
+    const chs = info.chapters || [];
+    if (chs.length > 0) {
+      chs.forEach((ch, idx) => {
+        const opt = document.createElement("option");
+        opt.value = idx;
+        opt.textContent = `${fmt(ch.start)} - ${fmt(ch.end)} · ${ch.title}`;
+        chSel.appendChild(opt);
+      });
+      chSel.classList.remove("hide");
+      $("chapterCountBadge").textContent = `📑 ${chs.length} capítulos`;
+      $("chapterCountBadge").classList.remove("hide");
+    } else {
+      chSel.classList.add("hide");
+      $("chapterCountBadge").classList.add("hide");
+    }
+
+    // Poblar selector de idiomas de subtítulos si hay disponibles
+    const sSel = $("subLangSelect");
+    const langs = info.sub_langs && info.sub_langs.length ? info.sub_langs : ["es", "en"];
+    sSel.innerHTML = "";
+    langs.forEach(l => {
+      const opt = document.createElement("option");
+      opt.value = l;
+      opt.textContent = l === "es" ? "Español (es)" : (l === "en" ? "Inglés (en)" : `Idioma (${l})`);
+      sSel.appendChild(opt);
+    });
+    srtSegments = [];
+    $("transcriptEditor").value = "";
+    $("srtList").innerHTML = "";
+
     $("prog").classList.add("hide");
     $("done").classList.add("hide");
     $("fill").classList.remove("done-fill");
+    updateStudioBadge();
     setKind("mp4");
 
     $("skeleton").classList.add("hide");
@@ -163,7 +257,19 @@ $("dl").onclick = async () => {
   $("peta").textContent = "";
 
   try {
-    jobId = (await post("/api/download", { url: $("url").value.trim(), kind, height })).id;
+    const opts = {
+      audioFormat,
+      trimStart: $("trimStart").value.trim(),
+      trimEnd: $("trimEnd").value.trim(),
+      normVol: $("normVolCheck").checked,
+      dspEffect,
+      videoProfile,
+      metaTitle: $("metaTitle").value.trim(),
+      metaArtist: $("metaArtist").value.trim(),
+      squareCover: $("squareCoverCheck").checked,
+      thumbnail: (info && info.thumbnail) || ""
+    };
+    jobId = (await post("/api/download", { url: $("url").value.trim(), kind, height, opts })).id;
     const timer = setInterval(async () => {
       try {
         const j = await (await fetch("/api/progress/" + jobId)).json();
@@ -368,6 +474,211 @@ fetch("/api/terms_status").then(r => r.json()).then(s => {
   if (s.dir) setDestDir(s.dir);
   if (!s.accepted) openWizard();
 }).catch(() => {});
+
+// ---- Descarga de Portada HD y Portada 1:1 ----
+async function handleCoverDownload(square = false) {
+  const btn = square ? $("saveSquareCoverBtn") : $("coverBtn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "⏳ Guardando…";
+  try {
+    const res = await post("/api/cover", {
+      url: $("url").value.trim(),
+      title: $("metaTitle").value.trim() || (info && (info.clean_title || info.title)) || "Portada",
+      thumbnail: (info && info.thumbnail) || "",
+      square
+    });
+    showCompletionToast(res.filename);
+  } catch (e) {
+    err(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+$("coverBtn").onclick = () => handleCoverDownload(false);
+$("saveSquareCoverBtn").onclick = () => handleCoverDownload(true);
+
+// ---- Modal: Estudio de Edición (Video & Audio) ----
+const studioModal = $("studioModal");
+$("openStudioBtn").onclick = () => studioModal.classList.remove("hide");
+$("closeStudioBtn").onclick = () => {
+  updateStudioBadge();
+  studioModal.classList.add("hide");
+};
+$("applyStudioBtn").onclick = () => {
+  updateStudioBadge();
+  studioModal.classList.add("hide");
+};
+
+$("chapterSelect").onchange = () => {
+  const idx = $("chapterSelect").value;
+  if (idx === "" || !info || !info.chapters || !info.chapters[idx]) return;
+  const ch = info.chapters[idx];
+  $("trimStart").value = fmt(ch.start) || "0:00";
+  $("trimEnd").value = fmt(ch.end) || "";
+  if (ch.title) $("metaTitle").value = ch.title;
+  updateStudioBadge();
+};
+
+document.querySelectorAll("#dspChips .chip").forEach(c => {
+  c.onclick = () => {
+    dspEffect = c.getAttribute("data-dsp") || "none";
+    document.querySelectorAll("#dspChips .chip").forEach(x => x.classList.remove("on"));
+    c.classList.add("on");
+    updateStudioBadge();
+  };
+});
+
+document.querySelectorAll("#vprofChips .chip").forEach(c => {
+  c.onclick = () => {
+    videoProfile = c.getAttribute("data-vprof") || "original";
+    document.querySelectorAll("#vprofChips .chip").forEach(x => x.classList.remove("on"));
+    c.classList.add("on");
+    updateStudioBadge();
+  };
+});
+
+$("resetStudioBtn").onclick = () => {
+  $("trimStart").value = "";
+  $("trimEnd").value = "";
+  $("chapterSelect").value = "";
+  $("normVolCheck").checked = false;
+  $("squareCoverCheck").checked = false;
+  dspEffect = "none";
+  videoProfile = "original";
+  document.querySelectorAll("#dspChips .chip").forEach((x, i) => x.classList.toggle("on", i === 0));
+  document.querySelectorAll("#vprofChips .chip").forEach((x, i) => x.classList.toggle("on", i === 0));
+  if (info) {
+    $("metaTitle").value = info.clean_title || info.title || "";
+    $("metaArtist").value = info.clean_artist || info.uploader || "";
+  }
+  updateStudioBadge();
+};
+
+// ---- Modal: Estudio de Subtítulos (.SRT) y Transcripción Editable (.TXT) ----
+const subsModal = $("subsModal");
+
+function updateWordCount() {
+  const txt = $("transcriptEditor").value.trim();
+  const count = txt ? txt.split(/\s+/).length : 0;
+  $("wordCountTxt").textContent = `${count} palabras`;
+}
+
+$("transcriptEditor").addEventListener("input", updateWordCount);
+
+function renderSrtBlocks() {
+  const list = $("srtList");
+  list.innerHTML = "";
+  srtSegments.forEach((seg, idx) => {
+    const row = document.createElement("div");
+    row.className = "srt-row";
+    const tSpan = document.createElement("span");
+    tSpan.className = "srt-time";
+    tSpan.textContent = `${seg.start.split(",")[0]} → ${seg.end.split(",")[0]}`;
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.className = "srt-input";
+    inp.value = seg.text;
+    inp.oninput = () => {
+      srtSegments[idx].text = inp.value;
+      $("transcriptEditor").value = srtSegments.map(s => s.text.trim()).filter(Boolean).join(" ");
+      updateWordCount();
+    };
+    row.appendChild(tSpan);
+    row.appendChild(inp);
+    list.appendChild(row);
+  });
+}
+
+function buildSrtString() {
+  if (!srtSegments.length) {
+    const txt = $("transcriptEditor").value.trim();
+    return txt ? `1\n00:00:00,000 --> 00:00:10,000\n${txt}\n` : "";
+  }
+  return srtSegments
+    .map((s, i) => `${i + 1}\n${s.start} --> ${s.end}\n${(s.text || "").trim()}\n`)
+    .join("\n");
+}
+
+function setSubsView(mode) {
+  const isTxt = mode === "txt";
+  $("subsViewSeg").setAttribute("data-mode", isTxt ? "mp4" : "mp3");
+  $("viewTxtBtn").classList.toggle("active", isTxt);
+  $("viewSrtBtn").classList.toggle("active", !isTxt);
+  $("txtViewWrap").classList.toggle("hide", !isTxt);
+  $("srtViewWrap").classList.toggle("hide", isTxt);
+}
+
+$("viewTxtBtn").onclick = () => setSubsView("txt");
+$("viewSrtBtn").onclick = () => setSubsView("srt");
+
+async function loadSubtitles() {
+  const url = $("url").value.trim();
+  if (!url) return;
+  $("subsLoading").classList.remove("hide");
+  $("txtViewWrap").classList.add("hide");
+  $("srtViewWrap").classList.add("hide");
+  $("fetchSubsBtn").disabled = true;
+  try {
+    const res = await post("/api/subtitles", { url, lang: $("subLangSelect").value });
+    srtSegments = res.segments || [];
+    $("transcriptEditor").value = res.full_text || "";
+    updateWordCount();
+    renderSrtBlocks();
+    $("subsStatusTxt").textContent = `✓ Idioma: ${res.lang} (${res.is_auto ? "Transcripción automática depurada" : "Subtítulos oficiales"}) · ${srtSegments.length} bloques`;
+  } catch (e) {
+    $("subsStatusTxt").textContent = "⚠️ " + e.message;
+  } finally {
+    $("subsLoading").classList.add("hide");
+    $("fetchSubsBtn").disabled = false;
+    setSubsView($("viewTxtBtn").classList.contains("active") ? "txt" : "srt");
+  }
+}
+
+$("openSubsBtn").onclick = () => {
+  subsModal.classList.remove("hide");
+  if (!srtSegments.length && !$("transcriptEditor").value.trim()) {
+    loadSubtitles();
+  }
+};
+$("closeSubsBtn").onclick = () => subsModal.classList.add("hide");
+$("fetchSubsBtn").onclick = loadSubtitles;
+
+$("copyTranscriptBtn").onclick = async () => {
+  const btn = $("copyTranscriptBtn");
+  const orig = btn.textContent;
+  try {
+    await navigator.clipboard.writeText($("transcriptEditor").value);
+    btn.textContent = "✓ ¡Copiado!";
+  } catch (e) {}
+  setTimeout(() => (btn.textContent = orig), 1500);
+};
+
+async function saveTranscriptOrSrt(fmtType) {
+  const btn = fmtType === "srt" ? $("saveSrtBtn") : $("saveTxtBtn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "⏳ Guardando…";
+  try {
+    const content = fmtType === "srt" ? buildSrtString() : $("transcriptEditor").value;
+    const res = await post("/api/subtitles/save", {
+      title: $("metaTitle").value.trim() || (info && (info.clean_title || info.title)) || "Transcripcion",
+      format: fmtType,
+      content
+    });
+    showCompletionToast(res.filename);
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+$("saveTxtBtn").onclick = () => saveTranscriptOrSrt("txt");
+$("saveSrtBtn").onclick = () => saveTranscriptOrSrt("srt");
 
 // Refracción especular dinámica en tarjetas Liquid Glass al mover el cursor
 document.querySelectorAll(".glass-panel").forEach(card => {
