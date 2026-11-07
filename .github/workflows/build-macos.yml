@@ -1,6 +1,8 @@
 name: Build macOS (M1 / Apple Silicon)
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   release:
     types: [published, edited]
@@ -16,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Instalar dependencias y empaquetar .app + .dmg
+      - name: Compilar .app y generar instalador 1-click (.pkg + .dmg)
         run: |
           brew install ffmpeg
           pip install -U pip pyinstaller yt-dlp
@@ -30,18 +32,53 @@ jobs:
             --add-data "web:web" --add-data "build_bin:bin" \
             --collect-all yt_dlp --collect-all yt_dlp_ejs \
             server.py
-          # Quitar cuarentena y empaquetar en .dmg
           xattr -cr "dist/VideoAudioDownloader.app" || true
+          codesign --force --deep --sign - "dist/VideoAudioDownloader.app" || true
+
+          # Postinstall: limpia cuarentena, crea acceso en Escritorio y abre la app al terminar
+          mkdir -p scripts
+          cat > scripts/postinstall << 'EOF'
+          #!/bin/bash
+          APP="/Applications/VideoAudioDownloader.app"
+          xattr -cr "$APP" 2>/dev/null || true
+          U="${USER:-$(stat -f '%Su' /dev/console)}"
+          H=$(eval echo "~$U")
+          ln -sf "$APP" "$H/Desktop/Video Audio Downloader.app" 2>/dev/null || true
+          chown -h "$U" "$H/Desktop/Video Audio Downloader.app" 2>/dev/null || true
+          su - "$U" -c "open '$APP'" 2>/dev/null || true
+          exit 0
+          EOF
+          chmod +x scripts/postinstall
+
+          # Instalador .pkg de 1 clic (instala en /Applications + corre postinstall)
+          pkgbuild --root "dist/VideoAudioDownloader.app" \
+                   --install-location "/Applications/VideoAudioDownloader.app" \
+                   --scripts scripts \
+                   --identifier "local.videoaudiodownloader" \
+                   --version "1.0" \
+                   VideoAudioDownloader-Mac-M1-Installer.pkg
+
+          # También .dmg con auto-instalación al abrir la app
           mkdir -p dmg_root
           cp -R "dist/VideoAudioDownloader.app" dmg_root/
           ln -s /Applications dmg_root/Applications
           hdiutil create -volname "VideoAudioDownloader" -srcfolder dmg_root -ov -format UDZO VideoAudioDownloader-Mac-M1.dmg
+
       - uses: actions/upload-artifact@v4
         with:
-          name: VideoAudioDownloader-Mac-M1.dmg
-          path: VideoAudioDownloader-Mac-M1.dmg
-      - name: Adjuntar .dmg al Release (si aplica)
-        if: github.event_name == 'release'
+          name: VideoAudioDownloader-Mac-M1
+          path: |
+            VideoAudioDownloader-Mac-M1-Installer.pkg
+            VideoAudioDownloader-Mac-M1.dmg
+
+      - name: Subir instaladores al último Release de GitHub
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" VideoAudioDownloader-Mac-M1.dmg --clobber
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --json tagName -q .tagName || echo "")
+          fi
+          if [ -n "$TAG" ]; then
+            gh release upload "$TAG" VideoAudioDownloader-Mac-M1-Installer.pkg VideoAudioDownloader-Mac-M1.dmg --clobber
+          fi

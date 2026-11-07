@@ -21,27 +21,18 @@ Funciona con [yt-dlp](https://github.com/yt-dlp/yt-dlp) y [FFmpeg](https://ffmpe
 
 Por defecto guarda en `Descargas\VIDEO-AUDIO`; cámbialo con el cuadro **Carpeta de destino**.
 
-## 🍎 Instalación en macOS (M1 / Apple Silicon o Intel)
+## 🍎 Instalación en macOS (M1 / Apple Silicon) — 1 clic desde Releases
 
-El archivo `.exe` de Windows no funciona en Mac, pero tienes dos formas de instalarlo:
+En el [Release](https://github.com/FernandoReyes04/Download-MP4-MP3/releases) se suben automáticamente dos archivos para Mac M1:
 
-### Opción A — Instalador `.dmg` desde Releases (sin instalar nada extra)
-1. En [Releases](https://github.com/FernandoReyes04/Download-MP4-MP3/releases) descarga `VideoAudioDownloader-Mac-M1.dmg` (se genera automáticamente con GitHub Actions).
-2. Ábrelo y arrastra `VideoAudioDownloader.app` a `Applications`.
-3. Si macOS dice que el desarrollador no está verificado, abre Terminal y ejecuta:
-   ```bash
-   xattr -cr /Applications/VideoAudioDownloader.app
-   ```
-   o haz clic derecho → **Abrir**.
+### Opción 1 — Instalador `.pkg` de 1 clic (`VideoAudioDownloader-Mac-M1-Installer.pkg`)
+1. Descarga `VideoAudioDownloader-Mac-M1-Installer.pkg` desde [Releases](https://github.com/FernandoReyes04/Download-MP4-MP3/releases).
+2. Haz **Clic derecho → Abrir** (o doble clic) y sigue el asistente (**Continuar → Instalar**).
+3. El instalador copia la app a `/Applications`, crea el acceso directo en el **Escritorio** y **abre el programa automáticamente**.
 
-### Opción B — Script instalador (`INSTALAR_MAC.command`)
-1. Descarga o clona este repositorio en la Mac.
-2. Abre Terminal en la carpeta y ejecuta:
-   ```bash
-   chmod +x INSTALAR_MAC.command
-   ./INSTALAR_MAC.command
-   ```
-   Instala FFmpeg y yt-dlp si faltan, crea `Video Audio Downloader.app` en `~/Applications` y deja un acceso directo en el Escritorio.
+### Opción 2 — `.dmg` auto-instalable (`VideoAudioDownloader-Mac-M1.dmg`)
+1. Abre `VideoAudioDownloader-Mac-M1.dmg` y ejecuta `VideoAudioDownloader.app` directamente (clic derecho → Abrir la primera vez).
+2. Al abrirse fuera de `Applications`, la app **se auto-copia sola a Aplicaciones**, crea el acceso directo en el Escritorio y se lanza desde ahí.
 
 ## 🛠️ Desarrollo y compilación
 

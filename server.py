@@ -172,7 +172,7 @@ def check_app_update():
     try:
         rel = http_get(f"https://api.github.com/repos/{REPO}/releases/latest")
         APP["latest"] = rel["tag_name"].lstrip("vV")
-        exts = (".dmg", "-mac.zip", "_mac.zip") if IS_MAC else (".exe",)
+        exts = (".pkg", ".dmg", "-mac.zip", "_mac.zip") if IS_MAC else (".exe",)
         asset = next((a for a in rel.get("assets", []) if a["name"].lower().endswith(exts)), None)
         APP["url"] = asset["browser_download_url"] if asset else ""
         newer = _vtuple(APP["latest"]) > _vtuple(APP_VERSION)
@@ -402,6 +402,31 @@ APP_NAME = "Video Audio Downloader"
 INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Programs" / "VideoAudioDownloader"
 INSTALLED_EXE = INSTALL_DIR / "VideoAudioDownloader.exe"
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoAudioDownloader"
+MAC_APP = Path("/Applications/VideoAudioDownloader.app") if os.access("/Applications", os.W_OK) \
+    else (Path.home() / "Applications" / "VideoAudioDownloader.app")
+
+
+def install_mac():
+    """Si la .app se abrió desde Descargas o un .dmg, se copia a Applications y crea alias en Escritorio."""
+    parts = Path(sys.executable).resolve().parts
+    if "VideoAudioDownloader.app" not in parts:
+        return
+    bundle = Path(*parts[:parts.index("VideoAudioDownloader.app") + 1])
+    if bundle == MAC_APP.resolve():
+        return
+    MAC_APP.parent.mkdir(parents=True, exist_ok=True)
+    if MAC_APP.exists():
+        shutil.rmtree(MAC_APP, ignore_errors=True)
+    shutil.copytree(bundle, MAC_APP, symlinks=True)
+    subprocess.run(["xattr", "-cr", str(MAC_APP)], capture_output=True)
+    desk = Path.home() / "Desktop" / f"{APP_NAME}.app"
+    if not desk.exists():
+        try:
+            desk.symlink_to(MAC_APP)
+        except Exception:
+            pass
+    subprocess.Popen(["open", "-n", str(MAC_APP)])
+    sys.exit(0)
 
 
 def ps(script):
@@ -467,7 +492,14 @@ def _main():
         uninstall_self(); sys.exit(0)
     if port_in_use():  # ya hay una instancia abierta
         open_window(); sys.exit(0)
-    if FROZEN and os.name == "nt" and Path(sys.executable).resolve() != INSTALLED_EXE.resolve():
+    if FROZEN and IS_MAC:
+        try:
+            install_mac()
+        except SystemExit:
+            raise
+        except Exception:
+            pass
+    if FROZEN and IS_WIN and Path(sys.executable).resolve() != INSTALLED_EXE.resolve():
         try:  # primera ejecución / actualización: instala y lanza la copia permanente
             install_self()
             subprocess.Popen([str(INSTALLED_EXE)], cwd=str(INSTALL_DIR))

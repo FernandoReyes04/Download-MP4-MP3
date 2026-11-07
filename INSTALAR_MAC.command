@@ -64,3 +64,4 @@ ln -sf "$APP" "$HOME/Desktop/Video Audio Downloader.app"
 
 echo "Listo. Abriendo Video Audio Downloader..."
 open "$APP"
+
