@@ -529,7 +529,7 @@ def launch_desktop_window():
             width=760,
             height=890,
             min_size=(620, 720),
-            background_color='#0b0c10',
+            background_color='#eef1f6',
             text_select=True
         )
         webview.start(icon=icon_path)

@@ -296,6 +296,15 @@ fetch("/api/terms_status").then(r => r.json()).then(s => {
   if (!s.accepted) openWizard();
 }).catch(() => {});
 
+// Refracción especular dinámica en tarjetas Liquid Glass al mover el cursor
+document.querySelectorAll(".glass-panel").forEach(card => {
+  card.addEventListener("mousemove", e => {
+    const r = card.getBoundingClientRect();
+    card.style.setProperty("--mx", `${e.clientX - r.left}px`);
+    card.style.setProperty("--my", `${e.clientY - r.top}px`);
+  });
+});
+
 refreshUpd();
 setInterval(refreshUpd, 6000);
 refreshApp();
