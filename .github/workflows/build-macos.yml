@@ -18,10 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compilar .app y generar instalador 1-click (.pkg + .dmg)
+      - name: Compilar app nativa y generar instalador con Licencia (.pkg + .dmg)
         run: |
-          brew install ffmpeg
-          pip install -U pip pyinstaller yt-dlp
+          brew install ffmpeg python-tk@3.12
+          pip install -U pip pyinstaller yt-dlp pillow
           mkdir -p build_bin
           cp "$(which ffmpeg)" "$(which ffprobe)" build_bin/
           sips -s format icns descargar.ico --out app.icns || true
@@ -29,14 +29,38 @@ jobs:
           [ -f app.icns ] && ICON_ARG="--icon app.icns"
           pyinstaller --noconfirm --onedir --windowed --name "VideoAudioDownloader" \
             $ICON_ARG \
-            --add-data "web:web" --add-data "build_bin:bin" \
+            --add-data "descargar.ico:." --add-data "web:web" --add-data "build_bin:bin" \
             --collect-all yt_dlp --collect-all yt_dlp_ejs \
-            server.py
+            app.py
           xattr -cr "dist/VideoAudioDownloader.app" || true
           codesign --force --deep --sign - "dist/VideoAudioDownloader.app" || true
 
-          # Postinstall: limpia cuarentena, crea acceso en Escritorio y abre la app al terminar
-          mkdir -p scripts
+          # Recursos del instalador macOS (Bienvenida + Términos y Condiciones)
+          mkdir -p scripts res
+          cat > res/welcome.txt << 'EOF'
+          Bienvenido al instalador de Video & Audio Downloader v2.0
+
+          Este asistente instalará la aplicación nativa de escritorio en tu Mac (Apple Silicon M1/M2/M3).
+          • 100% local y privada, sin anuncios.
+          • Descarga videos (MP4) y audio (MP3) en la máxima calidad disponible.
+          EOF
+
+          cat > res/license.txt << 'EOF'
+          TÉRMINOS Y CONDICIONES DE USO — VIDEO AUDIO DOWNLOADER
+
+          1. USO PERSONAL Y LOCAL
+          Este software se ejecuta de forma 100% local en tu computadora. No recopila datos personales, no envía historiales a servidores externos ni incluye publicidad.
+
+          2. PROPIEDAD INTELECTUAL Y DERECHOS DE AUTOR
+          El usuario es el único responsable del contenido que descargue. Esta herramienta debe emplearse únicamente para contenido propio, material bajo licencia libre o de dominio público, o copias privadas permitidas por la ley.
+
+          3. TÉRMINOS DE TERCEROS
+          El usuario se compromete a respetar los Términos de Servicio de cada plataforma utilizada.
+
+          4. AUSENCIA DE GARANTÍA
+          El software se proporciona "tal cual" (AS IS), sin garantías de ningún tipo.
+          EOF
+
           cat > scripts/postinstall << 'EOF'
           #!/bin/bash
           APP="/Applications/VideoAudioDownloader.app"
@@ -50,15 +74,38 @@ jobs:
           EOF
           chmod +x scripts/postinstall
 
-          # Instalador .pkg de 1 clic (instala en /Applications + corre postinstall)
           pkgbuild --root "dist/VideoAudioDownloader.app" \
                    --install-location "/Applications/VideoAudioDownloader.app" \
                    --scripts scripts \
                    --identifier "local.videoaudiodownloader" \
-                   --version "1.0" \
-                   VideoAudioDownloader-Mac-M1-Installer.pkg
+                   --version "2.0" \
+                   component.pkg
 
-          # También .dmg con auto-instalación al abrir la app
+          cat > distribution.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <installer-gui-script minSpecVersion="2">
+            <title>Video &amp; Audio Downloader</title>
+            <welcome file="welcome.txt" mime-type="text/plain"/>
+            <license file="license.txt" mime-type="text/plain"/>
+            <options customize="always" require-scripts="false"/>
+            <choices-outline>
+              <line choice="default">
+                <line choice="local.videoaudiodownloader"/>
+              </line>
+            </choices-outline>
+            <choice id="default"/>
+            <choice id="local.videoaudiodownloader" visible="true" title="Video Audio Downloader (App + Acceso directo)" description="Instala la aplicación en /Applications y crea un acceso directo en el Escritorio.">
+              <pkg-ref id="local.videoaudiodownloader"/>
+            </choice>
+            <pkg-ref id="local.videoaudiodownloader" version="2.0" onConclusion="none">component.pkg</pkg-ref>
+          </installer-gui-script>
+          EOF
+
+          productbuild --distribution distribution.xml \
+                       --resources res \
+                       --package-path . \
+                       VideoAudioDownloader-Mac-M1-Installer.pkg
+
           mkdir -p dmg_root
           cp -R "dist/VideoAudioDownloader.app" dmg_root/
           ln -s /Applications dmg_root/Applications
