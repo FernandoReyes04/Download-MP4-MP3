@@ -20,8 +20,8 @@ jobs:
           python-version: "3.12"
       - name: Compilar app nativa y generar instalador con Licencia (.pkg + .dmg)
         run: |
-          brew install ffmpeg python-tk@3.12
-          pip install -U pip pyinstaller yt-dlp pillow
+          brew install ffmpeg
+          pip install -U pip pyinstaller yt-dlp pywebview
           mkdir -p build_bin
           cp "$(which ffmpeg)" "$(which ffprobe)" build_bin/
           sips -s format icns descargar.ico --out app.icns || true
@@ -30,8 +30,8 @@ jobs:
           pyinstaller --noconfirm --onedir --windowed --name "VideoAudioDownloader" \
             $ICON_ARG \
             --add-data "descargar.ico:." --add-data "web:web" --add-data "build_bin:bin" \
-            --collect-all yt_dlp --collect-all yt_dlp_ejs \
-            app.py
+            --collect-all yt_dlp --collect-all yt_dlp_ejs --collect-all webview \
+            server.py
           xattr -cr "dist/VideoAudioDownloader.app" || true
           codesign --force --deep --sign - "dist/VideoAudioDownloader.app" || true
 
@@ -41,6 +41,7 @@ jobs:
           Bienvenido al instalador de Video & Audio Downloader v2.0
 
           Este asistente instalará la aplicación nativa de escritorio en tu Mac (Apple Silicon M1/M2/M3).
+          • Diseño minimalista Liquid Glass estilo macOS Tahoe.
           • 100% local y privada, sin anuncios.
           • Descarga videos (MP4) y audio (MP3) en la máxima calidad disponible.
           EOF
@@ -49,13 +50,13 @@ jobs:
           TÉRMINOS Y CONDICIONES DE USO — VIDEO AUDIO DOWNLOADER
 
           1. USO PERSONAL Y LOCAL
-          Este software se ejecuta de forma 100% local en tu computadora. No recopila datos personales, no envía historiales a servidores externos ni incluye publicidad.
+          Este software se ejecuta de forma 100% local en tu computadora. No recopila datos personales, no envía historiales a servidores de terceros ni incluye publicidad.
 
           2. PROPIEDAD INTELECTUAL Y DERECHOS DE AUTOR
-          El usuario es el único responsable del contenido que descargue. Esta herramienta debe emplearse únicamente para contenido propio, material bajo licencia libre o de dominio público, o copias privadas permitidas por la ley.
+          El usuario es el único responsable del contenido que descargue. Esta herramienta debe emplearse exclusivamente para contenido propio, material bajo licencia libre o de dominio público, o copias privadas permitidas por la ley.
 
           3. TÉRMINOS DE TERCEROS
-          El usuario se compromete a respetar los Términos de Servicio de cada plataforma utilizada.
+          El usuario se compromete a respetar los Términos de Servicio de cada plataforma externa.
 
           4. AUSENCIA DE GARANTÍA
           El software se proporciona "tal cual" (AS IS), sin garantías de ningún tipo.

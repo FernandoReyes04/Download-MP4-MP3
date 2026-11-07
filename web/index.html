@@ -2,90 +2,695 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <link rel="icon" href="descargar.ico">
 <title>Video &amp; Audio Downloader</title>
 <meta name="description" content="Descarga videos de YouTube e Instagram en máxima calidad como MP4 o MP3, de forma local.">
 <style>
-*{box-sizing:border-box;margin:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;min-height:100vh;color:#ededef;background:#161618;display:flex;justify-content:center;padding:44px 16px}
-main{width:100%;max-width:600px}
-h1{font-size:1.55rem;font-weight:600;color:#ededef;letter-spacing:-.02em}
-.sub{color:#8e8e96;margin:4px 0 22px;font-size:.92rem}
-.card{background:#202024;border:1px solid #2e2e33;border-radius:10px;padding:18px;margin-bottom:12px}
-.row{display:flex;gap:8px}
-input{flex:1;padding:11px 13px;border-radius:7px;border:1px solid #2e2e33;background:#161618;color:#ededef;font:inherit;font-size:.95rem;outline:none}
-input:focus{border-color:#52525b}
-button{font:inherit;font-size:.92rem;font-weight:500;cursor:pointer;border:1px solid transparent;border-radius:7px;padding:11px 18px;color:#141416;background:#e4e4e7;transition:.15s}
-button:hover{background:#ffffff}
-button:disabled{opacity:.45;pointer-events:none}
-button.ghost{background:#202024;color:#ededef;border-color:#2e2e33}
-button.ghost:hover{background:#2a2a30}
-.meta{display:flex;gap:14px}
-.meta img{width:140px;border-radius:6px;object-fit:cover;aspect-ratio:16/9;background:#161618}
-.meta h2{font-size:1rem;font-weight:600;line-height:1.35}
-.meta p{color:#8e8e96;font-size:.86rem;margin-top:4px}
-.tabs{display:flex;gap:8px;margin:14px 0 10px}
-.tab{flex:1;text-align:center;background:#161618;color:#ededef;border-color:#2e2e33}
-.tab.on{background:#e4e4e7;color:#141416;border-color:#e4e4e7}
-.opts{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
-.chip{padding:7px 13px;border-radius:6px;background:#161618;border:1px solid #2e2e33;font-size:.88rem;color:#8e8e96}
-.chip.on{border-color:#e4e4e7;color:#ededef;background:#27272c}
-.bar{height:6px;border-radius:4px;background:#161618;overflow:hidden;margin:12px 0 8px}
-.bar i{display:block;height:100%;width:0;background:#e4e4e7;transition:width .25s}
-.err{color:#f87171}.hide{display:none}
-small{color:#8e8e96;font-size:.82rem}
-#upd,#appupd{display:flex;align-items:center;gap:12px;justify-content:space-between;background:#202024;border-color:#3f3f46}
-footer{text-align:center;color:#8e8e96;font-size:.82rem;margin-top:8px}
-footer label{cursor:pointer;margin-left:10px}
-.hide,#upd.hide,#appupd.hide{display:none}
+/* Reset & Tipografía Apple SF Pro / Segoe UI Variable - Renderizado HiDPI Subpixel Nítido */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+:root {
+  --bg: #0b0c10;
+  --glass-card: rgba(255, 255, 255, 0.045);
+  --glass-card-hover: rgba(255, 255, 255, 0.065);
+  --glass-border: rgba(255, 255, 255, 0.11);
+  --glass-border-focus: rgba(255, 255, 255, 0.32);
+  --glass-highlight: rgba(255, 255, 255, 0.22);
+  --text-main: #f5f5f7;
+  --text-muted: #9595a2;
+  --text-dim: #686875;
+  --input-bg: rgba(0, 0, 0, 0.38);
+  --btn-primary-bg: linear-gradient(180deg, #ffffff 0%, #e2e3e9 100%);
+  --btn-primary-text: #0b0c10;
+  --spring: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Inter, sans-serif;
+  min-height: 100vh;
+  color: var(--text-main);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 90% 50% at 50% -15%, rgba(255, 255, 255, 0.08) 0%, transparent 60%),
+    radial-gradient(circle 380px at 15% 95%, rgba(255, 255, 255, 0.03) 0%, transparent 70%);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 36px 18px 48px;
+  overflow-y: auto;
+  user-select: none;
+}
+
+/* Contenedor Principal */
+main {
+  width: 100%;
+  max-width: 660px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Encabezado */
+header {
+  padding: 6px 6px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+.title-group h1 {
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+.title-group p {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  margin-top: 4px;
+  font-weight: 400;
+}
+.engine-badge {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.engine-badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 8px #34d399;
+}
+
+/* Tarjetas de Cristal Líquido (macOS Tahoe Glass) */
+.glass-panel {
+  background: var(--glass-card);
+  backdrop-filter: blur(40px) saturate(190%);
+  -webkit-backdrop-filter: blur(40px) saturate(190%);
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  padding: 20px 22px;
+  box-shadow:
+    0 24px 50px -15px rgba(0, 0, 0, 0.65),
+    inset 0 1px 1px 0 var(--glass-highlight);
+  transition: border-color 0.25s var(--spring), background 0.25s var(--spring);
+}
+
+.panel-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Filas y Entradas */
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+input[type="text"], input[type="url"] {
+  flex: 1;
+  padding: 13px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--input-bg);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.95rem;
+  outline: none;
+  transition: all 0.2s var(--spring);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+input[type="text"]::placeholder, input[type="url"]::placeholder {
+  color: var(--text-dim);
+}
+input[type="text"]:focus, input[type="url"]:focus {
+  border-color: var(--glass-border-focus);
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.09), inset 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* Botones con estilo Tahoe */
+button {
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 550;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 13px 22px;
+  transition: all 0.22s var(--spring);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+button:active {
+  transform: scale(0.975);
+}
+
+button.primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  box-shadow:
+    0 4px 18px rgba(255, 255, 255, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+button.primary:hover {
+  transform: translateY(-1.5px) scale(1.008);
+  box-shadow:
+    0 8px 26px rgba(255, 255, 255, 0.28),
+    inset 0 1px 0 #ffffff;
+}
+
+button.ghost {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-main);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.08);
+}
+button.ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  transform: none !important;
+}
+
+/* Segmented Control Liquid Pill (MP4 / MP3) */
+.segmented-control {
+  position: relative;
+  display: flex;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 4px;
+  margin: 14px 0 12px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+.segmented-btn {
+  flex: 1;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 0.9rem;
+  font-weight: 550;
+  cursor: pointer;
+  z-index: 2;
+  transition: color 0.2s;
+}
+.segmented-btn.active {
+  color: #ffffff;
+}
+.segmented-slider {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+  transition: transform 0.3s var(--spring);
+  z-index: 1;
+  pointer-events: none;
+}
+.segmented-control[data-mode="mp3"] .segmented-slider {
+  transform: translateX(100%);
+}
+
+/* Previsualización del video */
+.media-preview {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding-bottom: 6px;
+}
+.thumb-wrap {
+  position: relative;
+  width: 148px;
+  height: 84px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--glass-border);
+  flex-shrink: 0;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+.thumb-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s var(--spring);
+}
+.media-preview:hover .thumb-wrap img {
+  transform: scale(1.04);
+}
+.media-meta {
+  flex: 1;
+  min-width: 0;
+}
+.media-meta h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-main);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.media-meta .badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.badge {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 3px 9px;
+  border-radius: 6px;
+}
+
+/* Calidades (Chips de Cristal) */
+.options-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 12px 0 16px;
+}
+.chip {
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--glass-border);
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s var(--spring);
+}
+.chip:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-main);
+}
+.chip.on {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+}
+
+/* Barra de Progreso Líquida */
+.progress-container {
+  margin-top: 14px;
+}
+.progress-bar {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #9ca3af 0%, #ffffff 100%);
+  border-radius: 999px;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+  transition: width 0.25s ease-out;
+}
+.progress-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Alertas & Avisos */
+.alert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 0.88rem;
+  animation: slideDown 0.3s var(--spring);
+}
+.err {
+  color: #f87171;
+  font-size: 0.88rem;
+}
+
+/* Pie de página */
+footer {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+}
+footer a, footer span.link {
+  color: var(--text-muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+footer a:hover, footer span.link:hover {
+  color: #ffffff;
+}
+
+/* Modal Cristalino: Términos y Condiciones / Asistente de Instalación */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 18px;
+  opacity: 1;
+  transition: opacity 0.3s var(--spring);
+}
+.modal-overlay.hide {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+}
+.modal-sheet {
+  width: 100%;
+  max-width: 580px;
+  background: rgba(22, 23, 28, 0.92);
+  backdrop-filter: blur(50px) saturate(200%);
+  -webkit-backdrop-filter: blur(50px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 26px;
+  padding: 28px;
+  box-shadow:
+    0 35px 70px -15px rgba(0, 0, 0, 0.85),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.25);
+  animation: modalPop 0.35s var(--spring);
+}
+.modal-sheet h2 {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+}
+.modal-sheet .modal-sub {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin: 4px 0 18px;
+}
+.terms-box {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: #c9c9d4;
+  height: 180px;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  user-select: text;
+}
+.custom-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  cursor: pointer;
+}
+.custom-checkbox input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition: all 0.15s;
+}
+.custom-checkbox input[type="checkbox"]:checked {
+  background: #ffffff;
+  border-color: #ffffff;
+}
+.custom-checkbox input[type="checkbox"]:checked::after {
+  content: "";
+  width: 9px;
+  height: 5px;
+  border-left: 2px solid #0b0c10;
+  border-bottom: 2px solid #0b0c10;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+
+.modal-nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.hide { display: none !important; }
+
+/* Animaciones */
+@keyframes modalPop {
+  0% { opacity: 0; transform: scale(0.94) translateY(12px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes slideDown {
+  0% { opacity: 0; transform: translateY(-8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
 </style>
 </head>
 <body>
+
 <main>
-<h1>Video &amp; Audio Downloader</h1>
-<p class="sub">Descarga local en máxima calidad · MP4 y MP3</p>
+  <header>
+    <div class="title-group">
+      <h1>Video &amp; Audio Downloader</h1>
+      <p>Descarga local en máxima calidad · MP4 y MP3</p>
+    </div>
+    <div class="engine-badge" id="engineBadge">
+      <span class="dot"></span>
+      <span id="engineVer">yt-dlp listo</span>
+    </div>
+  </header>
 
-<section id="upd" class="card hide"><span id="updtxt"></span><button id="updbtn" class="hide">Actualizar ahora</button></section>
-<section id="appupd" class="card hide"><span id="appupdtxt"></span><button id="appupdbtn" class="hide">Actualizar programa</button></section>
+  <!-- Banner de actualización de motor -->
+  <section id="upd" class="alert-banner glass-panel hide">
+    <span id="updtxt"></span>
+    <button id="updbtn" class="primary" style="padding: 8px 16px; font-size: 0.82rem;">Actualizar motor</button>
+  </section>
 
-<section class="card">
-  <div class="row">
-    <input id="url" placeholder="Pega el enlace del video…" autofocus>
-    <button id="go">Analizar</button>
-  </div>
-  <p id="msg" class="err hide" style="margin-top:10px"></p>
-</section>
+  <!-- Banner de actualización del programa -->
+  <section id="appupd" class="alert-banner glass-panel hide">
+    <span id="appupdtxt"></span>
+    <button id="appupdbtn" class="primary" style="padding: 8px 16px; font-size: 0.82rem;">Actualizar programa</button>
+  </section>
 
-<section class="card">
-  <small>Carpeta de destino</small>
-  <div class="row" style="margin-top:6px">
-    <input id="dir" placeholder="C:\Users\...\Videos">
-    <button id="browse" class="ghost">Examinar…</button>
-    <button id="savedir" class="ghost">Guardar</button>
-  </div>
-  <p id="dirmsg" class="hide" style="margin-top:8px"><small></small></p>
-</section>
+  <!-- Tarjeta: Enlace -->
+  <section class="glass-panel">
+    <div class="panel-label">
+      <span>Enlace del video o audio</span>
+      <span style="font-size: 0.72rem; color: var(--text-dim);">YouTube · Instagram · TikTok · X</span>
+    </div>
+    <div class="row">
+      <input id="url" type="url" placeholder="Pega el enlace aquí (https://...)" autofocus autocomplete="off">
+      <button id="pasteBtn" class="ghost" type="button">Pegar</button>
+      <button id="go" class="primary" type="button">Analizar</button>
+    </div>
+    <p id="msg" class="err hide" style="margin-top: 10px;"></p>
+  </section>
 
-<section id="panel" class="card hide">
-  <div class="meta"><img id="thumb" alt="Miniatura"><div><h2 id="title"></h2><p id="info"></p></div></div>
-  <div class="tabs">
-    <button class="tab on" id="tmp4">MP4 (Video)</button>
-    <button class="tab" id="tmp3">MP3 (Audio)</button>
-  </div>
-  <div class="opts" id="opts"></div>
-  <button id="dl" style="width:100%">Descargar</button>
-  <div id="prog" class="hide">
-    <div class="bar"><i id="fill"></i></div>
-    <small id="ptxt"></small>
-    <div id="done" class="row hide" style="margin-top:10px">
-      <button id="save" style="flex:1">Guardar archivo</button>
-      <button id="folder" class="ghost">Abrir carpeta</button>
+  <!-- Tarjeta: Resultados y Descarga -->
+  <section id="panel" class="glass-panel hide">
+    <div class="media-preview">
+      <div class="thumb-wrap">
+        <img id="thumb" alt="Miniatura">
+      </div>
+      <div class="media-meta">
+        <h2 id="title">Título del video</h2>
+        <div class="badges">
+          <span class="badge" id="siteBadge">Plataforma</span>
+          <span class="badge" id="uploaderBadge">Canal</span>
+          <span class="badge" id="durationBadge">0:00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Segmented Liquid Pill (MP4 / MP3) -->
+    <div class="segmented-control" id="segmented" data-mode="mp4">
+      <div class="segmented-slider"></div>
+      <button type="button" class="segmented-btn active" id="tmp4">🎬 Video MP4</button>
+      <button type="button" class="segmented-btn" id="tmp3">🎵 Audio MP3</button>
+    </div>
+
+    <!-- Chips de calidad -->
+    <div class="options-chips" id="opts"></div>
+
+    <!-- Botón de Descarga -->
+    <button id="dl" class="primary" style="width: 100%; padding: 15px;">Descargar en máxima calidad</button>
+
+    <!-- Progreso -->
+    <div id="prog" class="progress-container hide">
+      <div class="progress-bar">
+        <div class="progress-fill" id="fill"></div>
+      </div>
+      <div class="progress-stats">
+        <span id="ptxt">Iniciando…</span>
+        <span id="peta"></span>
+      </div>
+      <div id="done" class="row hide" style="margin-top: 14px;">
+        <button id="save" class="primary" style="flex: 1;">Guardar archivo</button>
+        <button id="folder" class="ghost">Abrir carpeta</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tarjeta: Carpeta de Destino -->
+  <section class="glass-panel">
+    <div class="panel-label">
+      <span>Carpeta de destino</span>
+      <span id="dirmsg" class="hide" style="color: #34d399; font-size: 0.76rem;">✓ Guardada</span>
+    </div>
+    <div class="row">
+      <input id="dir" type="text" placeholder="Carpeta de descargas..." readonly style="cursor: pointer;">
+      <button id="browse" class="ghost" type="button">Examinar…</button>
+      <button id="openFolderBtn" class="ghost" type="button">Abrir</button>
+    </div>
+  </section>
+
+  <footer>
+    <span id="ver">v2.0</span>
+    <span>•</span>
+    <span class="link" id="openTermsLink">Términos y Opciones</span>
+    <span>•</span>
+    <label style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+      <input type="checkbox" id="auto" style="accent-color: #ffffff; cursor: pointer;"> Auto-actualizar
+    </label>
+  </footer>
+</main>
+
+<!-- Modal: Asistente de Instalación / Términos y Condiciones (macOS Tahoe Sheet) -->
+<div class="modal-overlay hide" id="modalOverlay">
+  <div class="modal-sheet">
+    <!-- Paso 1: Términos y Condiciones -->
+    <div id="wizardStep1">
+      <h2>Términos y Condiciones</h2>
+      <p class="modal-sub">Video &amp; Audio Downloader · Paso 1 de 2</p>
+
+      <div class="terms-box">
+        <strong>1. USO PERSONAL Y LOCAL</strong><br>
+        Este software se ejecuta de forma 100% local en tu dispositivo. No recopila datos personales, no envía tu historial a servidores de terceros ni incluye anuncios.<br><br>
+        <strong>2. DERECHOS DE AUTOR Y RESPONSABILIDAD</strong><br>
+        El usuario es el único responsable del material que descargue. Esta herramienta debe emplearse exclusivamente para contenido propio, de dominio público, con licencias abiertas (como Creative Commons) o copias de respaldo autorizadas por la legislación aplicable.<br><br>
+        <strong>3. TÉRMINOS DE SERVICIO</strong><br>
+        El usuario se compromete a respetar los Términos de Servicio de YouTube, Instagram y cualquier otra plataforma externa.<br><br>
+        <strong>4. SIN GARANTÍAS</strong><br>
+        El software se provee "tal cual", sin garantías expresas o implícitas.
+      </div>
+
+      <label class="custom-checkbox">
+        <input type="checkbox" id="termsCheck">
+        <span>He leído y acepto los Términos y Condiciones de uso</span>
+      </label>
+
+      <div class="modal-nav">
+        <button id="termsNextBtn" class="primary" disabled>Continuar</button>
+      </div>
+    </div>
+
+    <!-- Paso 2: Opciones de Instalación -->
+    <div id="wizardStep2" class="hide">
+      <h2>Opciones de Instalación</h2>
+      <p class="modal-sub">Personaliza tu configuración · Paso 2 de 2</p>
+
+      <label class="custom-checkbox">
+        <input type="checkbox" id="optDesktop" checked>
+        <span>Crear acceso directo en el Escritorio</span>
+      </label>
+
+      <label class="custom-checkbox">
+        <input type="checkbox" id="optStartMenu" checked>
+        <span>Agregar al Menú Inicio y lista de Aplicaciones</span>
+      </label>
+
+      <label class="custom-checkbox">
+        <input type="checkbox" id="optAutoUpd" checked>
+        <span>Actualizar automáticamente el motor de descargas (yt-dlp)</span>
+      </label>
+
+      <div style="margin-top: 16px;">
+        <div class="panel-label"><span>Carpeta de descargas predeterminada</span></div>
+        <div class="row">
+          <input id="wizardDir" type="text" placeholder="Carpeta de descargas..." readonly style="cursor: pointer;">
+          <button id="wizardBrowseBtn" class="ghost" type="button">Examinar…</button>
+        </div>
+      </div>
+
+      <div class="modal-nav">
+        <button id="wizardBackBtn" class="ghost" type="button">Atrás</button>
+        <button id="wizardFinishBtn" class="primary" type="button">Instalar y Comenzar</button>
+      </div>
     </div>
   </div>
-</section>
-<footer><span id="ver"></span><label><input type="checkbox" id="auto" style="flex:none;width:auto"> Actualizar automáticamente</label></footer>
-</main>
+</div>
+
 <script src="app.js"></script>
 </body>
 </html>
