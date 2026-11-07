@@ -313,22 +313,126 @@ if "--ytdlp" not in sys.argv:
     refresh_engine()
 
 
+def is_tiktok_url(url):
+    return bool(re.search(r"(^https?://)?([\w.-]*\.)?(tiktok\.com|douyin\.com)/", url or "", re.I))
+
+
+def tikwm_fetch(url):
+    """Obtiene metadatos y enlaces directos sin marca de agua (HD) desde TikWM para TikTok."""
+    import urllib.parse, urllib.request
+    api_url = "https://www.tikwm.com/api/?hd=1&url=" + urllib.parse.quote(url.strip())
+    req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        res = json.loads(r.read())
+    if res.get("code") != 0 or not res.get("data"):
+        raise RuntimeError(res.get("msg") or "No se pudo obtener el video sin marca de agua")
+    d = res["data"]
+    for k in ("hdplay", "play", "wmplay", "music", "cover", "origin_cover"):
+        v = d.get(k)
+        if isinstance(v, str) and v.startswith("/"):
+            d[k] = "https://www.tikwm.com" + v
+    return d
+
+
+def tikwm_download(job, url, kind, height, out):
+    """Descarga directa en máxima calidad sin marca de agua para TikTok."""
+    import urllib.request
+    job["stage"] = "Obteniendo stream HD sin marca de agua…"
+    d = tikwm_fetch(url)
+    raw_title = (d.get("title") or "TikTok Video").strip()
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", raw_title).strip(" .")[:140] or "TikTok_Video"
+    vid_id = str(d.get("id") or uuid.uuid4().hex[:8])
+
+    if kind == "mp3":
+        media_url = d.get("music") or d.get("play") or d.get("hdplay")
+        final_path = out / f"{safe_title} [{vid_id}].mp3"
+    else:
+        want_hd = not height or int(height) >= 720
+        media_url = (d.get("hdplay") or d.get("play")) if want_hd else (d.get("play") or d.get("hdplay"))
+        final_path = out / f"{safe_title} [{vid_id}].mp4"
+
+    if not media_url:
+        raise RuntimeError("No se encontró flujo limpio sin marca de agua")
+
+    tmp_path = out / f".{vid_id}.part"
+    req = urllib.request.Request(media_url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": "https://www.tiktok.com/"
+    })
+    t0 = time.time()
+    downloaded = 0
+    job["stage"] = "Descargando sin marca de agua…"
+    with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_path, "wb") as fh:
+        total = int(resp.headers.get("Content-Length") or 0)
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            fh.write(chunk)
+            downloaded += len(chunk)
+            elapsed = max(time.time() - t0, 0.001)
+            spd = downloaded / elapsed
+            job["speed"] = f"{spd / (1024 * 1024):.2f}MiB/s" if spd >= 1048576 else f"{spd / 1024:.0f}KiB/s"
+            if total > 0:
+                job["percent"] = round(min(99.0, (downloaded * 100.0) / total), 1)
+
+    if kind == "mp3" and FFDIR:
+        job["stage"] = "Procesando MP3 con FFmpeg…"
+        ff_exe = str(FFDIR / _ffname)
+        conv = subprocess.run([ff_exe, "-y", "-i", str(tmp_path), "-vn", "-acodec", "libmp3lame", "-q:a", "0", str(final_path)],
+                              capture_output=True, creationflags=NOWIN)
+        tmp_path.unlink(missing_ok=True)
+        if conv.returncode != 0:
+            raise RuntimeError("Falló la conversión a MP3")
+    else:
+        os.replace(tmp_path, final_path)
+    return str(final_path)
+
+
+def _format_res(f):
+    w, h = f.get("width"), f.get("height")
+    if w and h:
+        return min(int(w), int(h))
+    return int(h or w or 0)
+
+
 def get_info(url):
+    is_tt = is_tiktok_url(url)
     p = subprocess.run(YTDLP + ["-J", "--no-playlist", "--no-warnings", url],
                        capture_output=True, text=True, encoding="utf-8", creationflags=NOWIN)
     if p.returncode != 0:
+        if is_tt:
+            d = tikwm_fetch(url)
+            author = d.get("author") or {}
+            return {
+                "title": d.get("title") or "TikTok Video",
+                "thumbnail": d.get("origin_cover") or d.get("cover"),
+                "duration": d.get("duration"),
+                "uploader": author.get("nickname") or author.get("unique_id") or "TikTok",
+                "site": "TikTok",
+                "heights": [1080, 720, 540],
+                "no_watermark": True
+            }
         raise RuntimeError((p.stderr.strip().splitlines() or ["No se pudo leer el enlace"])[-1])
     d = json.loads(p.stdout)
-    heights = sorted({f["height"] for f in d.get("formats", [])
-                      if f.get("height") and f.get("vcodec") not in (None, "none")}, reverse=True)
+    fmts = d.get("formats", [])
+    clean_fmts = [f for f in fmts if f.get("vcodec") not in (None, "none")
+                  and f.get("format_id") != "download"
+                  and "watermark" not in (f.get("format_note") or "").lower()]
+    use_fmts = clean_fmts or [f for f in fmts if f.get("vcodec") not in (None, "none")]
+    heights = sorted({_format_res(f) for f in use_fmts if _format_res(f) > 0}, reverse=True)
+    if is_tt and not heights:
+        heights = [1080, 720, 540]
     return {"title": d.get("title"), "thumbnail": d.get("thumbnail"),
             "duration": d.get("duration"), "uploader": d.get("uploader"),
-            "site": d.get("extractor_key"), "heights": heights}
+            "site": d.get("extractor_key"), "heights": heights,
+            "no_watermark": is_tt}
 
 
 def run_job(job_id, url, kind, height):
     job = JOBS[job_id]
     out = OUT
+    is_tt = is_tiktok_url(url)
     pathfile = out / f".{job_id}.path"
     cmd = YTDLP + ["--no-playlist", "--no-mtime", "--newline", "--progress", "--no-warnings",
                    "--progress-template", "download:PROG|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
@@ -337,10 +441,16 @@ def run_job(job_id, url, kind, height):
     if kind == "mp3":
         cmd += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
                 "--embed-thumbnail", "--add-metadata"]
+    elif is_tt:
+        # En TikTok: excluir siempre cualquier formato con marca de agua ('download' o note='watermarked')
+        res_sort = f"has_watermark,quality,res:{int(height)},tbr,ext:mp4:m4a" if height else "has_watermark,quality,res,tbr,ext:mp4:m4a"
+        cmd += ["-f", "bv*[format_id!=download][format_note!*=watermark]+ba/b[format_id!=download][format_note!*=watermark]",
+                "-S", res_sort, "--merge-output-format", "mp4"]
     else:
         h = int(height) if height else 99999
-        cmd += ["-f", f"bv*[height<={h}]+ba/b[height<={h}]/b",
-                "-S", "res,ext:mp4:m4a,vcodec:h264", "--merge-output-format", "mp4"]
+        res_sort = f"has_watermark,quality,res:{h},ext:mp4:m4a,vcodec:h264" if height else "has_watermark,quality,res,ext:mp4:m4a,vcodec:h264"
+        cmd += ["-f", f"bv*[format_note!*=watermark][height<={h}]+ba/b[format_note!*=watermark][height<={h}]/bv*+ba/b",
+                "-S", res_sort, "--merge-output-format", "mp4"]
     cmd.append(url)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -359,9 +469,13 @@ def run_job(job_id, url, kind, height):
             elif line:
                 last = line
         proc.wait()
-        if proc.returncode != 0:
+        if proc.returncode == 0 and pathfile.exists() and pathfile.read_text(encoding="utf-8").strip():
+            f_str = pathfile.read_text(encoding="utf-8").strip().splitlines()[-1]
+        elif is_tt:
+            # Respaldo automático HD sin marca de agua vía CDN directo (TikWM)
+            f_str = tikwm_download(job, url, kind, height, out)
+        else:
             raise RuntimeError(last or "Falló la descarga")
-        f_str = pathfile.read_text(encoding="utf-8").strip().splitlines()[-1]
         LAST_FILE[0] = f_str
         job["file"] = f_str
         job["filename"] = Path(f_str).name
@@ -371,6 +485,20 @@ def run_job(job_id, url, kind, height):
         except Exception:
             pass
     except Exception as e:
+        if is_tt:
+            try:
+                f_str = tikwm_download(job, url, kind, height, out)
+                LAST_FILE[0] = f_str
+                job["file"] = f_str
+                job["filename"] = Path(f_str).name
+                job["status"], job["percent"] = "done", 100
+                try:
+                    reveal_file(f_str)
+                except Exception:
+                    pass
+                return
+            except Exception:
+                pass
         job["status"], job["error"] = "error", str(e)
     finally:
         pathfile.unlink(missing_ok=True)

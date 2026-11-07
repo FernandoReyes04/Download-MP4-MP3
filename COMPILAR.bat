@@ -19,4 +19,4 @@ echo.
 echo Listo:
 echo   - dist\VideoAudioDownloader.exe (Windows)
 echo   - dist\VideoAudioDownloader-Mac-M1.zip (macOS M1 / Intel)
-pause
+if /i "%~1" neq "--nopause" pause

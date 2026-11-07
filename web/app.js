@@ -126,6 +126,7 @@ $("go").onclick = async () => {
     $("thumb").src = info.thumbnail || "";
     $("title").textContent = info.title || "Video detectado";
     $("siteBadge").textContent = info.site || "Video";
+    $("noWmBadge").classList.toggle("hide", !info.no_watermark);
     $("uploaderBadge").textContent = info.uploader || "";
     $("durationBadge").textContent = fmt(info.duration) || "";
 
