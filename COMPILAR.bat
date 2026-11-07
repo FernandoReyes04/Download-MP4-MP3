@@ -14,6 +14,9 @@ python -m PyInstaller --noconfirm --onefile --noconsole --name "VideoAudioDownlo
   --add-data "web;web" --add-data "descargar.ico;." --add-data "build_bin;bin" ^
   --collect-all yt_dlp --collect-all yt_dlp_ejs --collect-all webview ^
   server.py
+python build_mac.py
 echo.
-echo Listo: dist\VideoAudioDownloader.exe
+echo Listo:
+echo   - dist\VideoAudioDownloader.exe (Windows)
+echo   - dist\VideoAudioDownloader-Mac-M1.zip (macOS M1 / Intel)
 pause

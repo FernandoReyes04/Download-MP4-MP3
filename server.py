@@ -112,7 +112,7 @@ FFDIR = BASE / "bin" if (BASE / "bin" / _ffname).exists() else None
 if not FFDIR and shutil.which("ffmpeg"):
     FFDIR = Path(shutil.which("ffmpeg")).parent
 if not FFDIR and IS_MAC:
-    for _d in (Path("/opt/homebrew/bin"), Path("/usr/local/bin")):
+    for _d in (APPDATA / "bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin")):
         if (_d / "ffmpeg").exists():
             FFDIR = _d
             break
@@ -458,6 +458,19 @@ def shortcut_paths(desktop=True, startmenu=True):
 
 def install_self(always=False, desktop=True, startmenu=True):
     """Copia el programa a una ubicación permanente, crea accesos directos y lo registra."""
+    if IS_MAC:
+        app_src = Path("/Applications/VideoAudioDownloader.app")
+        if not app_src.exists():
+            app_src = Path.home() / "Applications" / "VideoAudioDownloader.app"
+        if desktop and app_src.exists():
+            desk = Path.home() / "Desktop" / f"{APP_NAME}.app"
+            if not desk.exists():
+                try:
+                    desk.symlink_to(app_src)
+                except Exception:
+                    pass
+        save_settings(installed=True)
+        return
     if not IS_WIN:
         return
     import winreg
