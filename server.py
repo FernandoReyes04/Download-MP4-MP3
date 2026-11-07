@@ -100,10 +100,8 @@ UPDATE = {"state": "idle", "current": "", "latest": "", "message": ""}
 
 
 def refresh_engine():
-    if ENGINE.exists():
-        base = [str(ENGINE)]
-    else:
-        base = [sys.executable, "--ytdlp"] if FROZEN else [sys.executable, "-m", "yt_dlp"]
+    base = [str(ENGINE)] if (ENGINE.exists() and (not IS_WIN or FROZEN)) else (
+        [sys.executable, "--ytdlp"] if FROZEN else [sys.executable, "-m", "yt_dlp"])
     if FFDIR:
         base += ["--ffmpeg-location", str(FFDIR)]
     YTDLP[:] = base
@@ -133,15 +131,19 @@ def apply_update():
         return UPDATE
     UPDATE["state"] = "updating"
     try:
-        ENGINE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = ENGINE.with_suffix(".new")
-        tmp.write_bytes(http_get(ENGINE_URL, binary=True))
-        if not IS_WIN:
-            tmp.chmod(0o755)
-        ok = subprocess.run([str(tmp), "--version"], capture_output=True, text=True, creationflags=NOWIN)
-        if ok.returncode != 0:
-            raise RuntimeError("Descarga inválida")
-        os.replace(tmp, ENGINE)
+        if not FROZEN and IS_WIN:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp"],
+                           check=True, creationflags=NOWIN)
+        else:
+            ENGINE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = ENGINE.with_suffix(".new")
+            tmp.write_bytes(http_get(ENGINE_URL, binary=True))
+            if not IS_WIN:
+                tmp.chmod(0o755)
+            ok = subprocess.run([str(tmp), "--version"], capture_output=True, text=True, creationflags=NOWIN)
+            if ok.returncode != 0:
+                raise RuntimeError("Descarga inválida")
+            os.replace(tmp, ENGINE)
         refresh_engine()
         UPDATE["state"], UPDATE["message"] = "updated", f"Actualizado a {UPDATE['current']}"
     except Exception as e:
@@ -440,25 +442,41 @@ def shortcut_paths():
     return [Path(desktop) / f"{APP_NAME}.lnk", start / f"{APP_NAME}.lnk"]
 
 
-def install_self():
+def install_self(always=False):
     """Copia el programa a una ubicación permanente, crea accesos directos y lo registra."""
     import winreg
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    src = Path(sys.executable)
-    if not INSTALLED_EXE.exists() or src.stat().st_size != INSTALLED_EXE.stat().st_size \
-            or src.stat().st_mtime > INSTALLED_EXE.stat().st_mtime:
-        shutil.copy2(src, INSTALLED_EXE)
-    first = not read_settings().get("installed")
-    if first:
+    if FROZEN:
+        src = Path(sys.executable)
+        if not INSTALLED_EXE.exists() or src.stat().st_size != INSTALLED_EXE.stat().st_size \
+                or src.stat().st_mtime > INSTALLED_EXE.stat().st_mtime:
+            shutil.copy2(src, INSTALLED_EXE)
+        target, args, icon = str(INSTALLED_EXE), "", str(INSTALLED_EXE)
+        uninst = f'"{INSTALLED_EXE}" --uninstall'
+    else:
+        for item in ("server.py", "descargar.ico", "web"):
+            s = BASE / item
+            d = INSTALL_DIR / item
+            if s.exists() and s.resolve() != d.resolve():
+                if s.is_dir():
+                    shutil.rmtree(d, ignore_errors=True); shutil.copytree(s, d)
+                else:
+                    shutil.copy2(s, d)
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        target = str(pyw if pyw.exists() else Path(sys.executable))
+        args = f'"{INSTALL_DIR / "server.py"}"'
+        icon = str(INSTALL_DIR / "descargar.ico")
+        uninst = f'"{target}" "{INSTALL_DIR / "server.py"}" --uninstall'
+    if always or not read_settings().get("installed"):
         for lnk in shortcut_paths():
             lnk.parent.mkdir(parents=True, exist_ok=True)
             ps(f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');"
-               f"$s.TargetPath='{INSTALLED_EXE}';$s.WorkingDirectory='{INSTALL_DIR}';"
-               f"$s.IconLocation='{INSTALLED_EXE}';$s.Description='{APP_NAME}';$s.Save()")
+               f"$s.TargetPath='{target}';$s.Arguments='{args}';$s.WorkingDirectory='{INSTALL_DIR}';"
+               f"$s.IconLocation='{icon}';$s.Description='{APP_NAME}';$s.Save()")
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as k:
-            for n, v in {"DisplayName": APP_NAME, "DisplayIcon": str(INSTALLED_EXE),
+            for n, v in {"DisplayName": APP_NAME, "DisplayIcon": icon,
                          "InstallLocation": str(INSTALL_DIR), "Publisher": "Local",
-                         "UninstallString": f'"{INSTALLED_EXE}" --uninstall'}.items():
+                         "UninstallString": uninst}.items():
                 winreg.SetValueEx(k, n, 0, winreg.REG_SZ, v)
         save_settings(installed=True)
 
@@ -488,8 +506,10 @@ def _main():
         import yt_dlp
         yt_dlp.main(sys.argv[sys.argv.index("--ytdlp") + 1:])
         sys.exit(0)
-    if FROZEN and "--uninstall" in sys.argv:
+    if "--uninstall" in sys.argv:
         uninstall_self(); sys.exit(0)
+    if "--install" in sys.argv:
+        install_self(always=True); sys.exit(0)
     if port_in_use():  # ya hay una instancia abierta
         open_window(); sys.exit(0)
     if FROZEN and IS_MAC:
