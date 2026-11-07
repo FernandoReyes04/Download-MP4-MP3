@@ -13,13 +13,35 @@ Funciona con [yt-dlp](https://github.com/yt-dlp/yt-dlp) y [FFmpeg](https://ffmpe
 - **Se instala solo**: crea acceso directo en el Escritorio y el Menú Inicio, y se puede desinstalar desde *Configuración → Aplicaciones*.
 - Un único `.exe` con FFmpeg incluido; no requiere instalar Python.
 
-## 🚀 Uso rápido (ejecutable)
+## 🚀 Uso rápido (Windows)
 
 1. Descarga `VideoAudioDownloader.exe` desde [Releases](https://github.com/FernandoReyes04/Download-MP4-MP3/releases) (o compílalo, ver abajo).
 2. Ejecuta `VideoAudioDownloader.exe`. La primera vez se instala y abre una ventana de aplicación.
 3. Pega el enlace, pulsa **Analizar**, elige formato y **Descargar**.
 
 Por defecto guarda en `Descargas\VIDEO-AUDIO`; cámbialo con el cuadro **Carpeta de destino**.
+
+## 🍎 Instalación en macOS (M1 / Apple Silicon o Intel)
+
+El archivo `.exe` de Windows no funciona en Mac, pero tienes dos formas de instalarlo:
+
+### Opción A — Instalador `.dmg` desde Releases (sin instalar nada extra)
+1. En [Releases](https://github.com/FernandoReyes04/Download-MP4-MP3/releases) descarga `VideoAudioDownloader-Mac-M1.dmg` (se genera automáticamente con GitHub Actions).
+2. Ábrelo y arrastra `VideoAudioDownloader.app` a `Applications`.
+3. Si macOS dice que el desarrollador no está verificado, abre Terminal y ejecuta:
+   ```bash
+   xattr -cr /Applications/VideoAudioDownloader.app
+   ```
+   o haz clic derecho → **Abrir**.
+
+### Opción B — Script instalador (`INSTALAR_MAC.command`)
+1. Descarga o clona este repositorio en la Mac.
+2. Abre Terminal en la carpeta y ejecuta:
+   ```bash
+   chmod +x INSTALAR_MAC.command
+   ./INSTALAR_MAC.command
+   ```
+   Instala FFmpeg y yt-dlp si faltan, crea `Video Audio Downloader.app` en `~/Applications` y deja un acceso directo en el Escritorio.
 
 ## 🛠️ Desarrollo y compilación
 

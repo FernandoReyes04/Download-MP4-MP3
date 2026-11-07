@@ -1,0 +1,47 @@
+name: Build macOS (M1 / Apple Silicon)
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14   # Apple Silicon (M1)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias y empaquetar .app + .dmg
+        run: |
+          brew install ffmpeg
+          pip install -U pip pyinstaller yt-dlp
+          mkdir -p build_bin
+          cp "$(which ffmpeg)" "$(which ffprobe)" build_bin/
+          sips -s format icns descargar.ico --out app.icns || true
+          ICON_ARG=""
+          [ -f app.icns ] && ICON_ARG="--icon app.icns"
+          pyinstaller --noconfirm --onedir --windowed --name "VideoAudioDownloader" \
+            $ICON_ARG \
+            --add-data "web:web" --add-data "build_bin:bin" \
+            --collect-all yt_dlp --collect-all yt_dlp_ejs \
+            server.py
+          # Quitar cuarentena y empaquetar en .dmg
+          xattr -cr "dist/VideoAudioDownloader.app" || true
+          mkdir -p dmg_root
+          cp -R "dist/VideoAudioDownloader.app" dmg_root/
+          ln -s /Applications dmg_root/Applications
+          hdiutil create -volname "VideoAudioDownloader" -srcfolder dmg_root -ov -format UDZO VideoAudioDownloader-Mac-M1.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoAudioDownloader-Mac-M1.dmg
+          path: VideoAudioDownloader-Mac-M1.dmg
+      - name: Adjuntar .dmg al Release (si aplica)
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" VideoAudioDownloader-Mac-M1.dmg --clobber

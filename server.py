@@ -5,10 +5,18 @@ import json, os, re, shutil, subprocess, sys, threading, time, uuid
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
+IS_WIN = os.name == "nt"
+IS_MAC = sys.platform == "darwin"
 FROZEN = getattr(sys, "frozen", False)
 BASE = Path(sys._MEIPASS) if FROZEN else Path(__file__).parent
 WEB = BASE / "web"
-SETTINGS = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VideoAudioDownloader" / "settings.json"
+if IS_WIN:
+    APPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VideoAudioDownloader"
+elif IS_MAC:
+    APPDATA = Path.home() / "Library" / "Application Support" / "VideoAudioDownloader"
+else:
+    APPDATA = Path.home() / ".config" / "VideoAudioDownloader"
+SETTINGS = APPDATA / "settings.json"
 DEFAULT_OUT = Path.home() / "Downloads" / "VIDEO-AUDIO"
 
 
@@ -46,6 +54,10 @@ def save_settings(**kw):
 
 
 def browse_folder():
+    if IS_MAC:
+        r = subprocess.run(["osascript", "-e", 'POSIX path of (choose folder with prompt "Carpeta de destino")'],
+                           capture_output=True, text=True, encoding="utf-8")
+        return r.stdout.strip()
     ps = ("Add-Type -AssemblyName System.Windows.Forms;"
           "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
           "$f.Description='Carpeta de destino';$f.ShowNewFolderButton=$true;"
@@ -56,18 +68,33 @@ def browse_folder():
     return r.stdout.strip()
 
 
+def open_folder(p):
+    if IS_WIN:
+        os.startfile(p)
+    elif IS_MAC:
+        subprocess.Popen(["open", str(p)])
+    else:
+        subprocess.Popen(["xdg-open", str(p)])
+
+
 OUT = load_out()
 PORT = 8765
 JOBS = {}
-NOWIN = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-FFDIR = BASE / "bin" if (BASE / "bin" / "ffmpeg.exe").exists() else None
+NOWIN = subprocess.CREATE_NO_WINDOW if IS_WIN else 0
+_ffname = "ffmpeg.exe" if IS_WIN else "ffmpeg"
+FFDIR = BASE / "bin" if (BASE / "bin" / _ffname).exists() else None
 if not FFDIR and shutil.which("ffmpeg"):
     FFDIR = Path(shutil.which("ffmpeg")).parent
+if not FFDIR and IS_MAC:
+    for _d in (Path("/opt/homebrew/bin"), Path("/usr/local/bin")):
+        if (_d / "ffmpeg").exists():
+            FFDIR = _d; break
 LAST_PING = [0.0]
 
 # ---------- Motor de descargas (yt-dlp) con actualización ----------
-ENGINE = SETTINGS.parent / "yt-dlp.exe"   # copia actualizada descargada de GitHub
-ENGINE_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+_eng_name = "yt-dlp.exe" if IS_WIN else ("yt-dlp_macos" if IS_MAC else "yt-dlp")
+ENGINE = APPDATA / _eng_name   # copia actualizada descargada de GitHub
+ENGINE_URL = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{_eng_name}"
 YTDLP = []
 UPDATE = {"state": "idle", "current": "", "latest": "", "message": ""}
 
@@ -109,6 +136,8 @@ def apply_update():
         ENGINE.parent.mkdir(parents=True, exist_ok=True)
         tmp = ENGINE.with_suffix(".new")
         tmp.write_bytes(http_get(ENGINE_URL, binary=True))
+        if not IS_WIN:
+            tmp.chmod(0o755)
         ok = subprocess.run([str(tmp), "--version"], capture_output=True, text=True, creationflags=NOWIN)
         if ok.returncode != 0:
             raise RuntimeError("Descarga inválida")
@@ -143,7 +172,8 @@ def check_app_update():
     try:
         rel = http_get(f"https://api.github.com/repos/{REPO}/releases/latest")
         APP["latest"] = rel["tag_name"].lstrip("vV")
-        asset = next((a for a in rel.get("assets", []) if a["name"].lower().endswith(".exe")), None)
+        exts = (".dmg", "-mac.zip", "_mac.zip") if IS_MAC else (".exe",)
+        asset = next((a for a in rel.get("assets", []) if a["name"].lower().endswith(exts)), None)
         APP["url"] = asset["browser_download_url"] if asset else ""
         newer = _vtuple(APP["latest"]) > _vtuple(APP_VERSION)
         APP["state"] = "available" if newer and APP["url"] else "uptodate"
@@ -153,6 +183,10 @@ def check_app_update():
 
 
 def apply_app_update():
+    if IS_MAC and APP.get("url"):
+        subprocess.Popen(["open", APP["url"]])
+        APP["state"], APP["message"] = "updated", "Abriendo descarga del instalador…"
+        return APP
     if not FROZEN:
         APP["state"], APP["message"] = "error", "Solo disponible en el programa instalado (.exe)"
         return APP
@@ -273,7 +307,7 @@ class H(BaseHTTPRequestHandler):
                 set_out(data.get("dir", ""))
                 return self.send_json({"dir": str(OUT)})
             if self.path == "/api/open":
-                os.startfile(OUT)
+                open_folder(OUT)
                 return self.send_json({"ok": True})
             url = (data.get("url") or "").strip()
             if not re.match(r"^https?://", url):
@@ -330,6 +364,13 @@ class H(BaseHTTPRequestHandler):
 
 
 def find_browser():
+    if IS_MAC:
+        for p in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+                  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"):
+            if os.path.exists(p):
+                return p
+        return None
     for p in (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
               r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
               r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -342,7 +383,7 @@ def open_window():
     b = find_browser()
     url = f"http://127.0.0.1:{PORT}"
     if b:  # ventana de aplicación sin barra de navegador
-        prof = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VideoAudioDownloader" / "profile"
+        prof = APPDATA / "profile"
         subprocess.Popen([b, f"--app={url}", f"--user-data-dir={prof}", "--window-size=720,860",
                           "--no-first-run"])
     else:
